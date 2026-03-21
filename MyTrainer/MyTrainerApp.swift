@@ -1,11 +1,5 @@
-//
-//  MyTrainerApp.swift
-//  MyTrainer
-//
-//  Created by Fernando De Leon on 21/3/2026.
-//
-
 import SwiftUI
+import SwiftData
 
 @main
 struct MyTrainerApp: App {
@@ -13,5 +7,6 @@ struct MyTrainerApp: App {
         WindowGroup {
             ContentView()
         }
+        .modelContainer(for: [Exercise.self, ScheduledExercise.self, CompletedSet.self])
     }
 }
