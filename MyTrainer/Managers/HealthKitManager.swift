@@ -3,6 +3,7 @@ import HealthKit
 import Observation
 
 struct WorkoutWeekSummary: Sendable {
+    let typeID: Int
     let activityType: HKWorkoutActivityType
     let totalDuration: TimeInterval
     let totalCalories: Double
@@ -46,7 +47,8 @@ final class HealthKitManager {
     func fetchWorkouts(
         activityType: HKWorkoutActivityType,
         from startDate: Date,
-        to endDate: Date
+        to endDate: Date,
+        isIndoor: Bool? = nil
     ) async -> [HKWorkout] {
         let typePredicate = HKQuery.predicateForWorkouts(with: activityType)
         let datePredicate = HKQuery.predicateForSamples(
@@ -57,7 +59,7 @@ final class HealthKitManager {
         let compound = NSCompoundPredicate(andPredicateWithSubpredicates: [typePredicate, datePredicate])
         let sortDescriptor = NSSortDescriptor(key: HKSampleSortIdentifierStartDate, ascending: false)
 
-        return await withCheckedContinuation { continuation in
+        let allWorkouts: [HKWorkout] = await withCheckedContinuation { continuation in
             let query = HKSampleQuery(
                 sampleType: HKObjectType.workoutType(),
                 predicate: compound,
@@ -69,17 +71,32 @@ final class HealthKitManager {
             }
             healthStore.execute(query)
         }
+
+        // Filter by indoor/outdoor if specified
+        guard let isIndoor else { return allWorkouts }
+
+        return allWorkouts.filter { workout in
+            let indoorValue = workout.metadata?[HKMetadataKeyIndoorWorkout] as? Bool
+            if isIndoor {
+                // Treadmill: must be explicitly marked indoor
+                return indoorValue == true
+            } else {
+                // Outdoor: either explicitly outdoor or no metadata (default = outdoor)
+                return indoorValue != true
+            }
+        }
     }
 
     func fetchWeekSummary(
-        activityType: HKWorkoutActivityType,
+        typeInfo: WorkoutTypeInfo,
         weekOffset: Int
     ) async -> WorkoutWeekSummary {
         let cal = mondayCalendar
         let now = Date()
         guard let currentWeekStart = cal.dateInterval(of: .weekOfYear, for: now)?.start else {
             return WorkoutWeekSummary(
-                activityType: activityType,
+                typeID: typeInfo.typeID,
+                activityType: typeInfo.activityType,
                 totalDuration: 0,
                 totalCalories: 0,
                 workoutCount: 0,
@@ -90,7 +107,12 @@ final class HealthKitManager {
         let weekStart = cal.date(byAdding: .weekOfYear, value: weekOffset, to: currentWeekStart)!
         let weekEnd = cal.date(byAdding: .day, value: 7, to: weekStart)!
 
-        let workouts = await fetchWorkouts(activityType: activityType, from: weekStart, to: weekEnd)
+        let workouts = await fetchWorkouts(
+            activityType: typeInfo.activityType,
+            from: weekStart,
+            to: weekEnd,
+            isIndoor: typeInfo.isIndoor
+        )
 
         let totalDuration = workouts.reduce(0.0) { $0 + $1.duration }
         let totalCalories = workouts.reduce(0.0) { total, workout in
@@ -100,7 +122,8 @@ final class HealthKitManager {
         }
 
         return WorkoutWeekSummary(
-            activityType: activityType,
+            typeID: typeInfo.typeID,
+            activityType: typeInfo.activityType,
             totalDuration: totalDuration,
             totalCalories: totalCalories,
             workoutCount: workouts.count,
@@ -109,7 +132,7 @@ final class HealthKitManager {
     }
 
     func fetchDailyBreakdown(
-        activityType: HKWorkoutActivityType,
+        typeInfo: WorkoutTypeInfo,
         weekOffset: Int
     ) async -> [DailyWorkoutEntry] {
         let cal = mondayCalendar
@@ -121,7 +144,12 @@ final class HealthKitManager {
         let weekStart = cal.date(byAdding: .weekOfYear, value: weekOffset, to: currentWeekStart)!
         let weekEnd = cal.date(byAdding: .day, value: 7, to: weekStart)!
 
-        let workouts = await fetchWorkouts(activityType: activityType, from: weekStart, to: weekEnd)
+        let workouts = await fetchWorkouts(
+            activityType: typeInfo.activityType,
+            from: weekStart,
+            to: weekEnd,
+            isIndoor: typeInfo.isIndoor
+        )
 
         let dayAbbreviations = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
 

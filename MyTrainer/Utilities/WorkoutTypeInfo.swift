@@ -7,8 +7,20 @@ struct WorkoutTypeInfo: Identifiable {
     let displayName: String
     let color: Color
     let symbol: String
+    /// nil = no indoor/outdoor distinction, true = indoor (treadmill), false = outdoor
+    let isIndoor: Bool?
 
     var id: Int { typeID }
+
+    init(typeID: Int, activityType: HKWorkoutActivityType, displayName: String,
+         color: Color, symbol: String, isIndoor: Bool? = nil) {
+        self.typeID = typeID
+        self.activityType = activityType
+        self.displayName = displayName
+        self.color = color
+        self.symbol = symbol
+        self.isIndoor = isIndoor
+    }
 }
 
 extension WorkoutTypeInfo {
@@ -44,7 +56,8 @@ extension WorkoutTypeInfo {
             activityType: .running,
             displayName: "Outdoor Running",
             color: Color(red: 0.98, green: 0.45, blue: 0.09),
-            symbol: "figure.run"
+            symbol: "figure.run",
+            isIndoor: false
         ),
         // Running — Treadmill
         WorkoutTypeInfo(
@@ -52,7 +65,8 @@ extension WorkoutTypeInfo {
             activityType: .running,
             displayName: "Treadmill Running",
             color: Color(red: 0.95, green: 0.55, blue: 0.20),
-            symbol: "figure.run.treadmill"
+            symbol: "figure.run.treadmill",
+            isIndoor: true
         ),
         // Walking — Outdoor
         WorkoutTypeInfo(
@@ -60,7 +74,8 @@ extension WorkoutTypeInfo {
             activityType: .walking,
             displayName: "Outdoor Walking",
             color: Color(red: 0.08, green: 0.72, blue: 0.65),
-            symbol: "figure.walk"
+            symbol: "figure.walk",
+            isIndoor: false
         ),
         // Walking — Treadmill
         WorkoutTypeInfo(
@@ -68,7 +83,8 @@ extension WorkoutTypeInfo {
             activityType: .walking,
             displayName: "Treadmill Walking",
             color: Color(red: 0.15, green: 0.65, blue: 0.60),
-            symbol: "figure.walk.treadmill"
+            symbol: "figure.walk.treadmill",
+            isIndoor: true
         ),
         WorkoutTypeInfo(
             typeID: Int(HKWorkoutActivityType.cycling.rawValue),

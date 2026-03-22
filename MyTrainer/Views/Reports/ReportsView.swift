@@ -9,11 +9,11 @@ struct ReportsView: View {
 
     @State private var healthKitManager = HealthKitManager()
     @State private var weekOffset: Int = 0
-    @State private var summaries: [UInt: WorkoutWeekSummary] = [:]
-    @State private var previousSummaries: [UInt: WorkoutWeekSummary] = [:]
-    @State private var dailyBreakdowns: [UInt: [DailyWorkoutEntry]] = [:]
-    @State private var previousDailyBreakdowns: [UInt: [DailyWorkoutEntry]] = [:]
-    @State private var loadingTypes: Set<UInt> = []
+    @State private var summaries: [Int: WorkoutWeekSummary] = [:]
+    @State private var previousSummaries: [Int: WorkoutWeekSummary] = [:]
+    @State private var dailyBreakdowns: [Int: [DailyWorkoutEntry]] = [:]
+    @State private var previousDailyBreakdowns: [Int: [DailyWorkoutEntry]] = [:]
+    @State private var loadingTypes: Set<Int> = []
     @State private var authDenied = false
 
     private var calendar: Calendar {
@@ -26,16 +26,6 @@ struct ReportsView: View {
         let typeIDs = Set(allExercises.map(\.appleWorkoutType))
         return typeIDs.compactMap { WorkoutTypeInfo.info(for: $0) }
             .sorted { $0.displayName < $1.displayName }
-    }
-
-    private var uniqueHKTypes: [HKWorkoutActivityType] {
-        var seen = Set<UInt>()
-        return libraryTypeInfos.compactMap { info in
-            if seen.insert(info.activityType.rawValue).inserted {
-                return info.activityType
-            }
-            return nil
-        }
     }
 
     private var weekRangeLabel: String {
@@ -123,16 +113,16 @@ struct ReportsView: View {
             } else {
                 LazyVStack(spacing: 12) {
                     ForEach(libraryTypeInfos) { typeInfo in
-                        let rawValue = typeInfo.activityType.rawValue
+                        let tid = typeInfo.typeID
                         MetricCardView(
                             typeInfo: typeInfo,
-                            currentSummary: summaries[rawValue],
-                            previousSummary: previousSummaries[rawValue],
-                            currentDaily: dailyBreakdowns[rawValue] ?? [],
-                            previousDaily: previousDailyBreakdowns[rawValue] ?? [],
+                            currentSummary: summaries[tid],
+                            previousSummary: previousSummaries[tid],
+                            currentDaily: dailyBreakdowns[tid] ?? [],
+                            previousDaily: previousDailyBreakdowns[tid] ?? [],
                             exercises: allExercises,
                             scheduledExercises: allScheduledExercises,
-                            isLoading: loadingTypes.contains(rawValue),
+                            isLoading: loadingTypes.contains(tid),
                             healthKitManager: healthKitManager
                         )
                     }
@@ -170,35 +160,36 @@ struct ReportsView: View {
     }
 
     private func loadSummaries() async {
-        for hkType in uniqueHKTypes {
-            loadingTypes.insert(hkType.rawValue)
+        let infos = libraryTypeInfos
+        for info in infos {
+            loadingTypes.insert(info.typeID)
         }
 
-        await withTaskGroup(of: (UInt, WorkoutWeekSummary, WorkoutWeekSummary, [DailyWorkoutEntry], [DailyWorkoutEntry]).self) { group in
-            for hkType in uniqueHKTypes {
+        await withTaskGroup(of: (Int, WorkoutWeekSummary, WorkoutWeekSummary, [DailyWorkoutEntry], [DailyWorkoutEntry]).self) { group in
+            for info in infos {
                 group.addTask {
                     async let current = healthKitManager.fetchWeekSummary(
-                        activityType: hkType, weekOffset: weekOffset
+                        typeInfo: info, weekOffset: weekOffset
                     )
                     async let previous = healthKitManager.fetchWeekSummary(
-                        activityType: hkType, weekOffset: weekOffset - 1
+                        typeInfo: info, weekOffset: weekOffset - 1
                     )
                     async let daily = healthKitManager.fetchDailyBreakdown(
-                        activityType: hkType, weekOffset: weekOffset
+                        typeInfo: info, weekOffset: weekOffset
                     )
                     async let prevDaily = healthKitManager.fetchDailyBreakdown(
-                        activityType: hkType, weekOffset: weekOffset - 1
+                        typeInfo: info, weekOffset: weekOffset - 1
                     )
-                    return (hkType.rawValue, await current, await previous, await daily, await prevDaily)
+                    return (info.typeID, await current, await previous, await daily, await prevDaily)
                 }
             }
 
-            for await (rawValue, current, previous, daily, prevDaily) in group {
-                summaries[rawValue] = current
-                previousSummaries[rawValue] = previous
-                dailyBreakdowns[rawValue] = daily
-                previousDailyBreakdowns[rawValue] = prevDaily
-                loadingTypes.remove(rawValue)
+            for await (typeID, current, previous, daily, prevDaily) in group {
+                summaries[typeID] = current
+                previousSummaries[typeID] = previous
+                dailyBreakdowns[typeID] = daily
+                previousDailyBreakdowns[typeID] = prevDaily
+                loadingTypes.remove(typeID)
             }
         }
     }
