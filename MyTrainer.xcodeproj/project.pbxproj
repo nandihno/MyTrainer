@@ -257,6 +257,7 @@
 				DEVELOPMENT_TEAM = D58U53H2X6;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_NSHealthShareUsageDescription = "MyTrainer reads your workout history from Apple Health to display \nweekly training metrics, duration summaries, and week-over-week \nprogress comparisons for each of your exercise types.";
 				INFOPLIST_KEY_NSHealthUpdateUsageDescription = "MyTrainer may save workout sessions to Apple Health so your \ntraining activity is reflected in your Health and Fitness data.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
@@ -292,6 +293,7 @@
 				DEVELOPMENT_TEAM = D58U53H2X6;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_NSHealthShareUsageDescription = "MyTrainer reads your workout history from Apple Health to display \nweekly training metrics, duration summaries, and week-over-week \nprogress comparisons for each of your exercise types.";
 				INFOPLIST_KEY_NSHealthUpdateUsageDescription = "MyTrainer may save workout sessions to Apple Health so your \ntraining activity is reflected in your Health and Fitness data.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
