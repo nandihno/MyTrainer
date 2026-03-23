@@ -188,11 +188,11 @@ struct MyGymView: View {
     private func matchesItem(_ cs: CompletedSet, _ item: DayExerciseItem) -> Bool {
         switch item.source {
         case .template(let s):
-            return cs.scheduledExercise?.id == s.id && cs.dailyExercise == nil
+            return cs.scheduledExercise?.id == s.id && cs.dailyExerciseID == nil
         case .override(let s, _):
             return cs.scheduledExercise?.id == s.id
         case .oneOff(let d):
-            return cs.dailyExercise?.id == d.id
+            return cs.dailyExerciseID == d.id
         }
     }
 
@@ -370,7 +370,7 @@ struct MyGymView: View {
             case .template(let s), .override(let s, _):
                 cs = CompletedSet(scheduledExercise: s, setNumber: setNumber)
             case .oneOff(let d):
-                cs = CompletedSet(dailyExercise: d, setNumber: setNumber)
+                cs = CompletedSet(dailyExerciseID: d.id, setNumber: setNumber)
             }
             modelContext.insert(cs)
         }
@@ -384,7 +384,7 @@ struct MyGymView: View {
         case .template(let s), .override(let s, _):
             cs = CompletedSet(scheduledExercise: s, setNumber: nextNumber, isBonus: true)
         case .oneOff(let d):
-            cs = CompletedSet(dailyExercise: d, setNumber: nextNumber, isBonus: true)
+            cs = CompletedSet(dailyExerciseID: d.id, setNumber: nextNumber, isBonus: true)
         }
         modelContext.insert(cs)
     }
