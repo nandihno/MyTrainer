@@ -12,6 +12,7 @@ struct MetricCardView: View {
     let scheduledExercises: [ScheduledExercise]
     let isLoading: Bool
     let healthKitManager: HealthKitManager
+    let comparisonDayOfWeek: Int  // 1=Mon..7=Sun
 
     private var currentMinutes: Double {
         (currentSummary?.totalDuration ?? 0) / 60
@@ -36,8 +37,9 @@ struct MetricCardView: View {
                     .padding(.vertical, 20)
             } else if hasCurrentData {
                 metricsRow
+                heartRateRow
                 dailyChart
-                weekComparisonChart
+                dayByDayComparisonChart
                 exerciseBreakdown
             } else {
                 Label("No Health data for this week", systemImage: "heart.slash")
@@ -94,7 +96,7 @@ struct MetricCardView: View {
 
             Spacer()
 
-            changeLabel
+            durationChangeLabel
         }
     }
 
@@ -112,29 +114,86 @@ struct MetricCardView: View {
     }
 
     @ViewBuilder
-    private var changeLabel: some View {
+    private var durationChangeLabel: some View {
         if let change = healthKitManager.percentageChange(
             current: currentMinutes,
             previous: previousMinutes
         ) {
-            HStack(spacing: 2) {
-                Image(systemName: change >= 0 ? "arrow.up.right" : "arrow.down.right")
-                    .font(.caption2.bold())
-                Text("\(Int(abs(change)))%")
-                    .font(.caption.bold())
-            }
-            .foregroundStyle(change >= 0 ? .green : .red)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
-            .background(
-                Capsule()
-                    .fill(change >= 0 ? Color.green.opacity(0.15) : Color.red.opacity(0.15))
-            )
+            changeBadge(change: change)
         } else if previousMinutes == 0 {
             Text("No prev. data")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
         }
+    }
+
+    // MARK: - Heart Rate
+
+    @ViewBuilder
+    private var heartRateRow: some View {
+        let currentHR = currentSummary?.averageHeartRate
+        let previousHR = previousSummary?.averageHeartRate
+
+        if let hr = currentHR {
+            HStack(spacing: 16) {
+                // Current HR
+                HStack(spacing: 4) {
+                    Image(systemName: "heart.fill")
+                        .font(.caption2)
+                        .foregroundStyle(.red)
+                    Text("\(Int(hr))")
+                        .font(.title3.bold())
+                    Text("avg bpm")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                Spacer()
+
+                // HR change vs last week same period
+                if let prevHR = previousHR {
+                    if let change = healthKitManager.percentageChange(
+                        current: hr,
+                        previous: prevHR
+                    ) {
+                        VStack(alignment: .trailing, spacing: 2) {
+                            changeBadge(change: change)
+                            Text("was \(Int(prevHR)) bpm")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                } else {
+                    Text("No prev. HR")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .padding(.vertical, 4)
+            .padding(.horizontal, 12)
+            .background(
+                RoundedRectangle(cornerRadius: 10)
+                    .fill(Color.red.opacity(0.06))
+            )
+        }
+    }
+
+    // MARK: - Shared Change Badge
+
+    private func changeBadge(change: Double) -> some View {
+        HStack(spacing: 2) {
+            Image(systemName: change >= 0 ? "arrow.up.right" : "arrow.down.right")
+                .font(.caption2.bold())
+            Text("\(Int(abs(change)))%")
+                .font(.caption.bold())
+        }
+        .foregroundStyle(change >= 0 ? .green : .red)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .background(
+            Capsule()
+                .fill(change >= 0 ? Color.green.opacity(0.15) : Color.red.opacity(0.15))
+        )
     }
 
     // MARK: - Daily Bar Chart
@@ -184,57 +243,81 @@ struct MetricCardView: View {
         }
     }
 
-    // MARK: - Week Comparison
+    // MARK: - Day-by-Day Comparison Chart
 
     @ViewBuilder
-    private var weekComparisonChart: some View {
-        let thisWeekTotal = currentMinutes
-        let lastWeekTotal = previousMinutes
+    private var dayByDayComparisonChart: some View {
+        // Only show days up to the comparison scope
+        let daysToShow = comparisonDayOfWeek
+        let currentSlice = Array(currentDaily.prefix(daysToShow))
+        let previousSlice = Array(previousDaily.prefix(daysToShow))
 
-        if thisWeekTotal > 0 || lastWeekTotal > 0 {
+        if !currentSlice.isEmpty || !previousSlice.isEmpty {
             VStack(alignment: .leading, spacing: 6) {
-                Text("Week Comparison")
+                Text("vs Last Week (same days)")
                     .font(.caption)
                     .foregroundStyle(.secondary)
 
-                let maxVal = max(thisWeekTotal, lastWeekTotal, 1)
+                let chartData = buildComparisonData(
+                    current: currentSlice,
+                    previous: previousSlice
+                )
 
-                VStack(spacing: 8) {
-                    comparisonBar(
-                        label: "This week",
-                        value: thisWeekTotal,
-                        maxValue: maxVal,
-                        color: typeInfo.color
+                Chart(chartData) { item in
+                    BarMark(
+                        x: .value("Day", item.day),
+                        y: .value("Minutes", item.minutes),
+                        stacking: .unstacked
                     )
-                    comparisonBar(
-                        label: "Last week",
-                        value: lastWeekTotal,
-                        maxValue: maxVal,
-                        color: typeInfo.color.opacity(0.35)
-                    )
+                    .foregroundStyle(by: .value("Week", item.week))
+                    .cornerRadius(4)
+                    .position(by: .value("Week", item.week))
                 }
+                .chartForegroundStyleScale([
+                    "This week": typeInfo.color,
+                    "Last week": typeInfo.color.opacity(0.3)
+                ])
+                .chartLegend(position: .top, alignment: .trailing) {
+                    HStack(spacing: 12) {
+                        legendDot(label: "This week", color: typeInfo.color)
+                        legendDot(label: "Last week", color: typeInfo.color.opacity(0.3))
+                    }
+                    .font(.caption2)
+                }
+                .chartYAxis {
+                    AxisMarks(position: .leading) { value in
+                        AxisValueLabel {
+                            if let v = value.as(Double.self) {
+                                Text("\(Int(v))")
+                                    .font(.caption2)
+                            }
+                        }
+                        AxisGridLine(stroke: StrokeStyle(lineWidth: 0.5, dash: [4]))
+                            .foregroundStyle(Color.secondary.opacity(0.3))
+                    }
+                }
+                .chartXAxis {
+                    AxisMarks { value in
+                        AxisValueLabel {
+                            if let day = value.as(String.self) {
+                                Text(day)
+                                    .font(.caption2)
+                            }
+                        }
+                    }
+                }
+                .frame(height: 140)
             }
         }
     }
 
-    private func comparisonBar(label: String, value: Double, maxValue: Double, color: Color) -> some View {
-        HStack(spacing: 8) {
+    private func legendDot(label: String, color: Color) -> some View {
+        HStack(spacing: 4) {
+            Circle()
+                .fill(color)
+                .frame(width: 8, height: 8)
             Text(label)
-                .font(.caption2)
                 .foregroundStyle(.secondary)
-                .frame(width: 64, alignment: .trailing)
-
-            GeometryReader { geo in
-                RoundedRectangle(cornerRadius: 4)
-                    .fill(color)
-                    .frame(width: max(value > 0 ? 4 : 0, geo.size.width * (value / maxValue)))
-            }
-            .frame(height: 16)
-
-            Text("\(Int(value))m")
-                .font(.caption2.bold())
-                .foregroundStyle(.primary)
-                .frame(width: 36, alignment: .leading)
         }
     }
 
@@ -289,5 +372,39 @@ struct MetricCardView: View {
             return s == 0 ? "\(m)m" : "\(m)m \(s)s"
         }
         return "\(seconds)s"
+    }
+
+    // MARK: - Comparison Data Builder
+
+    private struct ComparisonEntry: Identifiable {
+        let id = UUID()
+        let day: String
+        let week: String
+        let minutes: Double
+    }
+
+    private func buildComparisonData(
+        current: [DailyWorkoutEntry],
+        previous: [DailyWorkoutEntry]
+    ) -> [ComparisonEntry] {
+        var data: [ComparisonEntry] = []
+
+        for entry in current {
+            data.append(ComparisonEntry(
+                day: entry.dayAbbreviation,
+                week: "This week",
+                minutes: entry.durationMinutes
+            ))
+        }
+
+        for entry in previous {
+            data.append(ComparisonEntry(
+                day: entry.dayAbbreviation,
+                week: "Last week",
+                minutes: entry.durationMinutes
+            ))
+        }
+
+        return data
     }
 }

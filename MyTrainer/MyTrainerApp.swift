@@ -7,6 +7,6 @@ struct MyTrainerApp: App {
         WindowGroup {
             ContentView()
         }
-        .modelContainer(for: [Exercise.self, ScheduledExercise.self, CompletedSet.self])
+        .modelContainer(for: [Exercise.self, ScheduledExercise.self, CompletedSet.self, DailyExercise.self])
     }
 }

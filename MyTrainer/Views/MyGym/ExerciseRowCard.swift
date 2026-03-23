@@ -2,13 +2,14 @@ import SwiftUI
 import SwiftData
 
 struct ExerciseRowCard: View {
-    let scheduledExercise: ScheduledExercise
+    let item: DayExerciseItem
     let completedSets: [CompletedSet]
     let onToggleSet: (Int) -> Void
     let onAddBonus: () -> Void
+    let onEdit: () -> Void
 
     private var typeInfo: WorkoutTypeInfo? {
-        guard let exercise = scheduledExercise.exercise else { return nil }
+        guard let exercise = item.exercise else { return nil }
         return WorkoutTypeInfo.info(for: exercise.appleWorkoutType)
     }
 
@@ -26,6 +27,7 @@ struct ExerciseRowCard: View {
 
     var body: some View {
         HStack(spacing: 0) {
+            // Left accent bar
             RoundedRectangle(cornerRadius: 2)
                 .fill(accentColor)
                 .frame(width: 4)
@@ -34,25 +36,51 @@ struct ExerciseRowCard: View {
             VStack(alignment: .leading, spacing: 8) {
                 HStack {
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(scheduledExercise.exercise?.name ?? "Unknown")
-                            .font(.headline)
+                        HStack(spacing: 6) {
+                            Text(item.exercise?.name ?? "Unknown")
+                                .font(.headline)
 
-                        Text(scheduledExercise.subtitle)
+                            // Badge for customised entries
+                            if item.isCustomised {
+                                Text(item.dailyExercise?.isOneOff == true ? "Today only" : "Edited")
+                                    .font(.system(size: 9, weight: .semibold))
+                                    .foregroundStyle(.white)
+                                    .padding(.horizontal, 6)
+                                    .padding(.vertical, 2)
+                                    .background(
+                                        Capsule().fill(accentColor.opacity(0.6))
+                                    )
+                            }
+                        }
+
+                        Text(item.subtitle)
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
                     }
 
                     Spacer()
 
-                    if let info = typeInfo {
-                        Label(info.displayName, systemImage: info.symbol)
-                            .font(.caption)
-                            .foregroundStyle(accentColor)
+                    VStack(alignment: .trailing, spacing: 4) {
+                        if let info = typeInfo {
+                            Label(info.displayName, systemImage: info.symbol)
+                                .font(.caption)
+                                .foregroundStyle(accentColor)
+                        }
+
+                        Button {
+                            onEdit()
+                        } label: {
+                            Image(systemName: "pencil.circle")
+                                .font(.title3)
+                                .foregroundStyle(.secondary)
+                        }
+                        .buttonStyle(.plain)
                     }
                 }
 
+                // Set bubbles
                 HStack(spacing: 6) {
-                    ForEach(1...scheduledExercise.sets, id: \.self) { setNum in
+                    ForEach(1...max(item.sets, 1), id: \.self) { setNum in
                         SetBubbleView(
                             setNumber: setNum,
                             isCompleted: completedSetNumbers.contains(setNum),

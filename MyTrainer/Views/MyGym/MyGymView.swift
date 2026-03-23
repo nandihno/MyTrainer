@@ -1,14 +1,120 @@
 import SwiftUI
 import SwiftData
 
+// MARK: - Unified wrapper for anything shown in the day list
+
+struct DayExerciseItem: Identifiable {
+    enum Source {
+        case template(ScheduledExercise)          // from Library schedule
+        case override(ScheduledExercise, DailyExercise) // template edited for this day
+        case oneOff(DailyExercise)                // added just for this day
+    }
+
+    let id: String
+    let source: Source
+
+    var exercise: Exercise? {
+        switch source {
+        case .template(let s):      return s.exercise
+        case .override(_, let d):   return d.exercise
+        case .oneOff(let d):        return d.exercise
+        }
+    }
+
+    var sets: Int {
+        switch source {
+        case .template(let s):      return s.sets
+        case .override(_, let d):   return d.sets
+        case .oneOff(let d):        return d.sets
+        }
+    }
+
+    var reps: Int {
+        switch source {
+        case .template(let s):      return s.reps
+        case .override(_, let d):   return d.reps
+        case .oneOff(let d):        return d.reps
+        }
+    }
+
+    var durationSeconds: Int {
+        switch source {
+        case .template(let s):      return s.durationSeconds
+        case .override(_, let d):   return d.durationSeconds
+        case .oneOff(let d):        return d.durationSeconds
+        }
+    }
+
+    var isTimeBased: Bool { reps == 0 }
+
+    var subtitle: String {
+        if isTimeBased {
+            return "\(sets) sets \u{00D7} \(formattedDuration)"
+        } else {
+            return "\(sets) sets \u{00D7} \(reps) reps"
+        }
+    }
+
+    var orderIndex: Int {
+        switch source {
+        case .template(let s):      return s.orderIndex
+        case .override(let s, _):   return s.orderIndex
+        case .oneOff(let d):        return d.orderIndex
+        }
+    }
+
+    /// Is this a one-off or overridden entry (i.e. not the pure template)?
+    var isCustomised: Bool {
+        switch source {
+        case .template:  return false
+        case .override:  return true
+        case .oneOff:    return true
+        }
+    }
+
+    var scheduledExercise: ScheduledExercise? {
+        switch source {
+        case .template(let s):      return s
+        case .override(let s, _):   return s
+        case .oneOff:               return nil
+        }
+    }
+
+    var dailyExercise: DailyExercise? {
+        switch source {
+        case .template:             return nil
+        case .override(_, let d):   return d
+        case .oneOff(let d):        return d
+        }
+    }
+
+    private var formattedDuration: String {
+        let s = durationSeconds
+        if s >= 60 {
+            let m = s / 60
+            let r = s % 60
+            return r == 0 ? "\(m)m" : "\(m)m \(r)s"
+        }
+        return "\(s)s"
+    }
+}
+
+// MARK: - View
+
 struct MyGymView: View {
     @Environment(\.modelContext) private var modelContext
     @Query private var allScheduledExercises: [ScheduledExercise]
+    @Query private var allDailyExercises: [DailyExercise]
     @Query private var allCompletedSets: [CompletedSet]
+    @Query private var allExercises: [Exercise]
 
     @State private var selectedDay: Int = 1
     @State private var todayDayOfWeek: Int = 1
     @State private var weekDates: [Date] = []
+
+    // Sheets
+    @State private var showAddSheet = false
+    @State private var itemToEdit: DayExerciseItem?
 
     private var calendar: Calendar {
         var cal = Calendar.current
@@ -16,10 +122,46 @@ struct MyGymView: View {
         return cal
     }
 
-    private var exercisesForDay: [ScheduledExercise] {
-        allScheduledExercises
+    // MARK: - Day exercise list (merged)
+
+    private var itemsForDay: [DayExerciseItem] {
+        let templateExercises = allScheduledExercises
             .filter { $0.dayOfWeek == selectedDay }
             .sorted { $0.orderIndex < $1.orderIndex }
+
+        let dayStart = selectedDayStart
+        let dailyForDate = allDailyExercises.filter {
+            calendar.isDate($0.date, inSameDayAs: dayStart)
+        }
+
+        var items: [DayExerciseItem] = []
+
+        // 1) Template entries — check for overrides
+        for scheduled in templateExercises {
+            if let override = dailyForDate.first(where: { $0.scheduledExerciseID == scheduled.id }) {
+                items.append(DayExerciseItem(
+                    id: "override-\(scheduled.id.uuidString)",
+                    source: .override(scheduled, override)
+                ))
+            } else {
+                items.append(DayExerciseItem(
+                    id: "template-\(scheduled.id.uuidString)",
+                    source: .template(scheduled)
+                ))
+            }
+        }
+
+        // 2) One-off additions
+        let oneOffs = dailyForDate.filter { $0.scheduledExerciseID == nil }
+            .sorted { $0.orderIndex < $1.orderIndex }
+        for daily in oneOffs {
+            items.append(DayExerciseItem(
+                id: "oneoff-\(daily.id.uuidString)",
+                source: .oneOff(daily)
+            ))
+        }
+
+        return items
     }
 
     private var todayStart: Date {
@@ -35,26 +177,37 @@ struct MyGymView: View {
         calendar.date(byAdding: .day, value: 1, to: selectedDayStart)!
     }
 
-    private func completedSets(for scheduled: ScheduledExercise) -> [CompletedSet] {
+    // MARK: Completed sets
+
+    private func completedSets(for item: DayExerciseItem) -> [CompletedSet] {
         allCompletedSets.filter { cs in
-            cs.scheduledExercise?.id == scheduled.id &&
-            cs.completedAt >= selectedDayStart &&
-            cs.completedAt < selectedDayEnd
+            cs.completedAt >= selectedDayStart && cs.completedAt < selectedDayEnd && matchesItem(cs, item)
+        }
+    }
+
+    private func matchesItem(_ cs: CompletedSet, _ item: DayExerciseItem) -> Bool {
+        switch item.source {
+        case .template(let s):
+            return cs.scheduledExercise?.id == s.id && cs.dailyExercise == nil
+        case .override(let s, _):
+            return cs.scheduledExercise?.id == s.id
+        case .oneOff(let d):
+            return cs.dailyExercise?.id == d.id
         }
     }
 
     private var totalSetsForDay: Int {
-        exercisesForDay.reduce(0) { $0 + $1.sets }
+        itemsForDay.reduce(0) { $0 + $1.sets }
     }
 
     private var completedSetsCountForDay: Int {
-        exercisesForDay.reduce(0) { total, ex in
-            total + completedSets(for: ex).filter { !$0.isBonus }.count
+        itemsForDay.reduce(0) { total, item in
+            total + completedSets(for: item).filter { !$0.isBonus }.count
         }
     }
 
     private var mostCommonTypeColor: Color {
-        let types = exercisesForDay.compactMap { $0.exercise?.appleWorkoutType }
+        let types = itemsForDay.compactMap { $0.exercise?.appleWorkoutType }
         let counts = Dictionary(grouping: types, by: { $0 }).mapValues(\.count)
         guard let topType = counts.max(by: { $0.value < $1.value })?.key,
               let info = WorkoutTypeInfo.info(for: topType) else {
@@ -62,6 +215,8 @@ struct MyGymView: View {
         }
         return info.color
     }
+
+    // MARK: - Body
 
     var body: some View {
         NavigationStack {
@@ -72,25 +227,40 @@ struct MyGymView: View {
                     weekDates: weekDates
                 )
 
-                if exercisesForDay.isEmpty {
-                    ContentUnavailableView {
-                        Label("No exercises for this day", systemImage: "calendar.badge.plus")
-                    } description: {
-                        Text("Add exercises in the Library tab and assign them to this day")
+                if itemsForDay.isEmpty {
+                    VStack(spacing: 16) {
+                        ContentUnavailableView {
+                            Label("No exercises for this day", systemImage: "calendar.badge.plus")
+                        } description: {
+                            Text("Add exercises in the Library tab or tap + to add one just for today")
+                        }
+
+                        Button {
+                            showAddSheet = true
+                        } label: {
+                            Label("Add Exercise for Today", systemImage: "plus.circle.fill")
+                                .font(.body.bold())
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .tint(.green)
+                        .disabled(allExercises.isEmpty)
                     }
                     .frame(maxHeight: .infinity)
                 } else {
                     ScrollView {
                         LazyVStack(spacing: 12) {
-                            ForEach(exercisesForDay) { scheduled in
+                            ForEach(itemsForDay) { item in
                                 ExerciseRowCard(
-                                    scheduledExercise: scheduled,
-                                    completedSets: completedSets(for: scheduled),
+                                    item: item,
+                                    completedSets: completedSets(for: item),
                                     onToggleSet: { setNum in
-                                        toggleSet(for: scheduled, setNumber: setNum)
+                                        toggleSet(for: item, setNumber: setNum)
                                     },
                                     onAddBonus: {
-                                        addBonusSet(for: scheduled)
+                                        addBonusSet(for: item)
+                                    },
+                                    onEdit: {
+                                        itemToEdit = item
                                     }
                                 )
                             }
@@ -107,9 +277,37 @@ struct MyGymView: View {
             }
             .background(Color(.appBackground))
             .navigationTitle("My Gym")
+            .toolbar {
+                ToolbarItem(placement: .primaryAction) {
+                    Button {
+                        showAddSheet = true
+                    } label: {
+                        Image(systemName: "plus")
+                    }
+                    .disabled(allExercises.isEmpty)
+                }
+            }
             .onAppear { setupWeek() }
+            .sheet(isPresented: $showAddSheet) {
+                DayExerciseFormView(
+                    mode: .add,
+                    date: selectedDayStart,
+                    existingOrderCount: itemsForDay.count,
+                    allExercises: allExercises
+                )
+            }
+            .sheet(item: $itemToEdit) { item in
+                DayExerciseFormView(
+                    mode: .edit(item),
+                    date: selectedDayStart,
+                    existingOrderCount: itemsForDay.count,
+                    allExercises: allExercises
+                )
+            }
         }
     }
+
+    // MARK: - Completion Summary
 
     private var completionSummary: some View {
         VStack(spacing: 6) {
@@ -145,6 +343,8 @@ struct MyGymView: View {
         .background(Color(.appBackground))
     }
 
+    // MARK: - Setup
+
     private func setupWeek() {
         let now = Date()
         let cal = calendar
@@ -152,34 +352,40 @@ struct MyGymView: View {
         weekDates = (0..<7).map { cal.date(byAdding: .day, value: $0, to: weekInterval.start)! }
 
         let weekday = cal.component(.weekday, from: now)
-        // Convert Sunday=1..Saturday=7 to Monday=1..Sunday=7
         todayDayOfWeek = weekday == 1 ? 7 : weekday - 1
         selectedDay = todayDayOfWeek
     }
 
-    private func toggleSet(for scheduled: ScheduledExercise, setNumber: Int) {
-        let existing = completedSets(for: scheduled).first {
+    // MARK: - Set Actions
+
+    private func toggleSet(for item: DayExerciseItem, setNumber: Int) {
+        let existing = completedSets(for: item).first {
             $0.setNumber == setNumber && !$0.isBonus
         }
         if let existing {
             modelContext.delete(existing)
         } else {
-            let cs = CompletedSet(
-                scheduledExercise: scheduled,
-                setNumber: setNumber
-            )
+            let cs: CompletedSet
+            switch item.source {
+            case .template(let s), .override(let s, _):
+                cs = CompletedSet(scheduledExercise: s, setNumber: setNumber)
+            case .oneOff(let d):
+                cs = CompletedSet(dailyExercise: d, setNumber: setNumber)
+            }
             modelContext.insert(cs)
         }
     }
 
-    private func addBonusSet(for scheduled: ScheduledExercise) {
-        let existing = completedSets(for: scheduled).filter(\.isBonus)
-        let nextNumber = scheduled.sets + existing.count + 1
-        let bonus = CompletedSet(
-            scheduledExercise: scheduled,
-            setNumber: nextNumber,
-            isBonus: true
-        )
-        modelContext.insert(bonus)
+    private func addBonusSet(for item: DayExerciseItem) {
+        let existing = completedSets(for: item).filter(\.isBonus)
+        let nextNumber = item.sets + existing.count + 1
+        let cs: CompletedSet
+        switch item.source {
+        case .template(let s), .override(let s, _):
+            cs = CompletedSet(scheduledExercise: s, setNumber: nextNumber, isBonus: true)
+        case .oneOff(let d):
+            cs = CompletedSet(dailyExercise: d, setNumber: nextNumber, isBonus: true)
+        }
+        modelContext.insert(cs)
     }
 }

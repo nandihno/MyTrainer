@@ -46,6 +46,29 @@ struct ReportsView: View {
         return "\(startDay)\u{2013}\(endFormatted)"
     }
 
+    /// For the current week (offset 0), compare only up to today's day.
+    /// For past weeks, compare the full 7 days.
+    private var comparisonDayOfWeek: Int {
+        if weekOffset == 0 {
+            return healthKitManager.todayDayOfWeek()
+        }
+        return 7 // full week for past weeks
+    }
+
+    /// Human-readable label for the comparison scope
+    private var comparisonScopeLabel: String {
+        if weekOffset == 0 {
+            let dayNames = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+            let today = healthKitManager.todayDayOfWeek()
+            if today == 1 {
+                return "Comparing Monday vs last Monday"
+            } else {
+                return "Comparing Mon\u{2013}\(dayNames[today - 1]) vs same days last week"
+            }
+        }
+        return "Comparing full week vs previous week"
+    }
+
     var body: some View {
         NavigationStack {
             Group {
@@ -72,32 +95,38 @@ struct ReportsView: View {
     }
 
     private var weekNavigator: some View {
-        HStack {
-            Button {
-                weekOffset -= 1
-                Task { await loadSummaries() }
-            } label: {
-                Label("Previous", systemImage: "chevron.left")
-                    .labelStyle(.iconOnly)
+        VStack(spacing: 4) {
+            HStack {
+                Button {
+                    weekOffset -= 1
+                    Task { await loadSummaries() }
+                } label: {
+                    Label("Previous", systemImage: "chevron.left")
+                        .labelStyle(.iconOnly)
+                }
+
+                Spacer()
+
+                Text(weekRangeLabel)
+                    .font(.subheadline.bold())
+
+                Spacer()
+
+                Button {
+                    weekOffset += 1
+                    Task { await loadSummaries() }
+                } label: {
+                    Label("Next", systemImage: "chevron.right")
+                        .labelStyle(.iconOnly)
+                }
+                .disabled(weekOffset >= 0)
             }
+            .padding(.horizontal)
 
-            Spacer()
-
-            Text(weekRangeLabel)
-                .font(.subheadline.bold())
-
-            Spacer()
-
-            Button {
-                weekOffset += 1
-                Task { await loadSummaries() }
-            } label: {
-                Label("Next", systemImage: "chevron.right")
-                    .labelStyle(.iconOnly)
-            }
-            .disabled(weekOffset >= 0)
+            Text(comparisonScopeLabel)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
         }
-        .padding(.horizontal)
         .padding(.vertical, 8)
     }
 
@@ -123,7 +152,8 @@ struct ReportsView: View {
                             exercises: allExercises,
                             scheduledExercises: allScheduledExercises,
                             isLoading: loadingTypes.contains(tid),
-                            healthKitManager: healthKitManager
+                            healthKitManager: healthKitManager,
+                            comparisonDayOfWeek: comparisonDayOfWeek
                         )
                     }
                 }
@@ -161,6 +191,8 @@ struct ReportsView: View {
 
     private func loadSummaries() async {
         let infos = libraryTypeInfos
+        let throughDay = comparisonDayOfWeek
+
         for info in infos {
             loadingTypes.insert(info.typeID)
         }
@@ -169,10 +201,10 @@ struct ReportsView: View {
             for info in infos {
                 group.addTask {
                     async let current = healthKitManager.fetchWeekSummary(
-                        typeInfo: info, weekOffset: weekOffset
+                        typeInfo: info, weekOffset: weekOffset, throughDayOfWeek: throughDay
                     )
                     async let previous = healthKitManager.fetchWeekSummary(
-                        typeInfo: info, weekOffset: weekOffset - 1
+                        typeInfo: info, weekOffset: weekOffset - 1, throughDayOfWeek: throughDay
                     )
                     async let daily = healthKitManager.fetchDailyBreakdown(
                         typeInfo: info, weekOffset: weekOffset
