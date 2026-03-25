@@ -6,8 +6,9 @@ struct WeeklyScheduleEditorView: View {
     @Query private var allScheduledExercises: [ScheduledExercise]
     @Query private var allExercises: [Exercise]
 
-    @State private var showingAddSheet = false
-    @State private var addingForDay: Int = 1
+    /// Callback to request showing the "Add to Schedule" sheet for a given day.
+    /// Presenting is handled by the parent (LibraryView) to avoid double-sheet conflicts.
+    var onAddExercise: (Int) -> Void
 
     private let dayNames = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
 
@@ -33,11 +34,13 @@ struct WeeklyScheduleEditorView: View {
                     .onDelete { offsets in
                         deleteExercises(for: day, at: offsets)
                     }
+                    .onMove { source, destination in
+                        moveExercises(for: day, from: source, to: destination)
+                    }
                 }
 
                 Button {
-                    addingForDay = day
-                    showingAddSheet = true
+                    onAddExercise(day)
                 } label: {
                     Label("Add Exercise", systemImage: "plus")
                         .font(.subheadline)
@@ -53,9 +56,6 @@ struct WeeklyScheduleEditorView: View {
                         .foregroundStyle(.secondary)
                 }
             }
-        }
-        .sheet(isPresented: $showingAddSheet) {
-            AddToScheduleSheet(dayOfWeek: addingForDay, exercises: allExercises)
         }
     }
 
@@ -79,6 +79,14 @@ struct WeeklyScheduleEditorView: View {
 
             Image(systemName: "line.3.horizontal")
                 .foregroundStyle(.tertiary)
+        }
+    }
+
+    private func moveExercises(for day: Int, from source: IndexSet, to destination: Int) {
+        var dayExercises = exercises(for: day)
+        dayExercises.move(fromOffsets: source, toOffset: destination)
+        for (index, exercise) in dayExercises.enumerated() {
+            exercise.orderIndex = index
         }
     }
 
@@ -112,7 +120,7 @@ struct AddToScheduleSheet: View {
                 Section("Exercise") {
                     Picker("Exercise", selection: $selectedExercise) {
                         Text("Select an exercise").tag(nil as Exercise?)
-                        ForEach(exercises) { exercise in
+                        ForEach(exercises.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }) { exercise in
                             Text(exercise.name).tag(exercise as Exercise?)
                         }
                     }
