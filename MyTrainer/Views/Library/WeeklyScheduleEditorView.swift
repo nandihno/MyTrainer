@@ -7,43 +7,84 @@ struct WeeklyScheduleEditorView: View {
     @Query private var allExercises: [Exercise]
 
     /// Callback to request showing the "Add to Schedule" sheet for a given day.
-    /// Presenting is handled by the parent (LibraryView) to avoid double-sheet conflicts.
-    var onAddExercise: (Int) -> Void
+    /// Bool parameter: true = alternative, false = regular.
+    var onAddExercise: (Int, Bool) -> Void
 
     private let dayNames = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
 
-    private func exercises(for day: Int) -> [ScheduledExercise] {
+    private func mainExercises(for day: Int) -> [ScheduledExercise] {
         allScheduledExercises
-            .filter { $0.dayOfWeek == day }
+            .filter { $0.dayOfWeek == day && !$0.isAlternative }
             .sorted { $0.orderIndex < $1.orderIndex }
+    }
+
+    private func alternativeExercises(for day: Int) -> [ScheduledExercise] {
+        allScheduledExercises
+            .filter { $0.dayOfWeek == day && $0.isAlternative }
+            .sorted { $0.orderIndex < $1.orderIndex }
+    }
+
+    private func totalCount(for day: Int) -> Int {
+        allScheduledExercises.filter { $0.dayOfWeek == day }.count
     }
 
     var body: some View {
         ForEach(1...7, id: \.self) { day in
             DisclosureGroup {
-                let dayExercises = exercises(for: day)
-                if dayExercises.isEmpty {
+                let mainList = mainExercises(for: day)
+                let altList = alternativeExercises(for: day)
+
+                // Main exercises
+                if mainList.isEmpty && altList.isEmpty {
                     Text("No exercises")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .padding(.vertical, 4)
-                } else {
-                    ForEach(dayExercises) { scheduled in
+                } else if !mainList.isEmpty {
+                    ForEach(mainList) { scheduled in
                         scheduledRow(scheduled)
                     }
                     .onDelete { offsets in
-                        deleteExercises(for: day, at: offsets)
+                        deleteExercises(mainList, at: offsets)
                     }
                     .onMove { source, destination in
-                        moveExercises(for: day, from: source, to: destination)
+                        moveExercises(mainList, from: source, to: destination)
                     }
                 }
 
                 Button {
-                    onAddExercise(day)
+                    onAddExercise(day, false)
                 } label: {
                     Label("Add Exercise", systemImage: "plus")
                         .font(.subheadline)
+                }
+                .disabled(allExercises.isEmpty)
+
+                // Alternative exercises
+                if !altList.isEmpty {
+                    Text("Alternatives")
+                        .font(.caption)
+                        .fontWeight(.semibold)
+                        .foregroundStyle(.orange)
+                        .padding(.top, 4)
+
+                    ForEach(altList) { scheduled in
+                        alternativeRow(scheduled)
+                    }
+                    .onDelete { offsets in
+                        deleteExercises(altList, at: offsets)
+                    }
+                    .onMove { source, destination in
+                        moveExercises(altList, from: source, to: destination)
+                    }
+                }
+
+                Button {
+                    onAddExercise(day, true)
+                } label: {
+                    Label("Add Alternative", systemImage: "plus.diamond")
+                        .font(.subheadline)
+                        .foregroundStyle(.orange)
                 }
                 .disabled(allExercises.isEmpty)
             } label: {
@@ -51,9 +92,17 @@ struct WeeklyScheduleEditorView: View {
                     Text(dayNames[day - 1])
                         .font(.headline)
                     Spacer()
-                    Text("\(exercises(for: day).count)")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                    let main = mainExercises(for: day).count
+                    let alt = alternativeExercises(for: day).count
+                    if alt > 0 {
+                        Text("\(main)+\(alt)")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    } else {
+                        Text("\(main)")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
                 }
             }
         }
@@ -82,18 +131,42 @@ struct WeeklyScheduleEditorView: View {
         }
     }
 
-    private func moveExercises(for day: Int, from source: IndexSet, to destination: Int) {
-        var dayExercises = exercises(for: day)
-        dayExercises.move(fromOffsets: source, toOffset: destination)
-        for (index, exercise) in dayExercises.enumerated() {
+    private func alternativeRow(_ scheduled: ScheduledExercise) -> some View {
+        HStack {
+            if let info = WorkoutTypeInfo.info(for: scheduled.exercise?.appleWorkoutType ?? 0) {
+                Image(systemName: "diamond.fill")
+                    .font(.system(size: 6))
+                    .foregroundStyle(info.color)
+            }
+
+            VStack(alignment: .leading) {
+                HStack(spacing: 4) {
+                    Text(scheduled.exercise?.name ?? "Unknown")
+                        .font(.body)
+                }
+                Text(scheduled.subtitle)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Spacer()
+
+            Image(systemName: "line.3.horizontal")
+                .foregroundStyle(.tertiary)
+        }
+    }
+
+    private func moveExercises(_ list: [ScheduledExercise], from source: IndexSet, to destination: Int) {
+        var mutable = list
+        mutable.move(fromOffsets: source, toOffset: destination)
+        for (index, exercise) in mutable.enumerated() {
             exercise.orderIndex = index
         }
     }
 
-    private func deleteExercises(for day: Int, at offsets: IndexSet) {
-        let dayExercises = exercises(for: day)
+    private func deleteExercises(_ list: [ScheduledExercise], at offsets: IndexSet) {
         for index in offsets {
-            modelContext.delete(dayExercises[index])
+            modelContext.delete(list[index])
         }
     }
 }
@@ -104,6 +177,7 @@ struct AddToScheduleSheet: View {
 
     let dayOfWeek: Int
     let exercises: [Exercise]
+    var isAlternative: Bool = false
 
     @State private var selectedExercise: Exercise?
     @State private var sets: Int = 3
@@ -158,7 +232,7 @@ struct AddToScheduleSheet: View {
                     }
                 }
             }
-            .navigationTitle("Add to Schedule")
+            .navigationTitle(isAlternative ? "Add Alternative" : "Add to Schedule")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -183,14 +257,17 @@ struct AddToScheduleSheet: View {
 
     private func addToSchedule() {
         guard let exercise = selectedExercise else { return }
-        let currentCount = allScheduledExercises.filter { $0.dayOfWeek == dayOfWeek }.count
+        let sameTypeCount = allScheduledExercises
+            .filter { $0.dayOfWeek == dayOfWeek && $0.isAlternative == isAlternative }
+            .count
         let scheduled = ScheduledExercise(
             exercise: exercise,
             dayOfWeek: dayOfWeek,
-            orderIndex: currentCount,
+            orderIndex: sameTypeCount,
             sets: sets,
             reps: isTimeBased ? 0 : reps,
-            durationSeconds: isTimeBased ? durationMinutes * 60 : 0
+            durationSeconds: isTimeBased ? durationMinutes * 60 : 0,
+            isAlternative: isAlternative
         )
         modelContext.insert(scheduled)
         dismiss()

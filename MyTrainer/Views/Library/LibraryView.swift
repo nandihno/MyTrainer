@@ -11,13 +11,13 @@ struct LibraryView: View {
     private enum LibrarySheet: Identifiable {
         case addExercise
         case editExercise(Exercise)
-        case addToSchedule(dayOfWeek: Int)
+        case addToSchedule(dayOfWeek: Int, isAlternative: Bool)
 
         var id: String {
             switch self {
             case .addExercise: return "add"
             case .editExercise(let e): return "edit-\(e.id)"
-            case .addToSchedule(let d): return "schedule-\(d)"
+            case .addToSchedule(let d, let alt): return "schedule-\(d)-\(alt)"
             }
         }
     }
@@ -74,8 +74,8 @@ struct LibraryView: View {
                 }
 
                 Section {
-                    WeeklyScheduleEditorView(onAddExercise: { day in
-                        activeSheet = .addToSchedule(dayOfWeek: day)
+                    WeeklyScheduleEditorView(onAddExercise: { day, isAlternative in
+                        activeSheet = .addToSchedule(dayOfWeek: day, isAlternative: isAlternative)
                     })
                 } header: {
                     Text("Weekly Schedule")
@@ -99,8 +99,8 @@ struct LibraryView: View {
                     ExerciseFormView(exerciseToEdit: nil)
                 case .editExercise(let exercise):
                     ExerciseFormView(exerciseToEdit: exercise)
-                case .addToSchedule(let day):
-                    AddToScheduleSheet(dayOfWeek: day, exercises: exercises)
+                case .addToSchedule(let day, let isAlternative):
+                    AddToScheduleSheet(dayOfWeek: day, exercises: exercises, isAlternative: isAlternative)
                 }
             }
         }

@@ -126,7 +126,7 @@ struct MyGymView: View {
 
     private var itemsForDay: [DayExerciseItem] {
         let templateExercises = allScheduledExercises
-            .filter { $0.dayOfWeek == selectedDay }
+            .filter { $0.dayOfWeek == selectedDay && !$0.isAlternative }
             .sorted { $0.orderIndex < $1.orderIndex }
 
         let dayStart = selectedDayStart
@@ -162,6 +162,13 @@ struct MyGymView: View {
         }
 
         return items
+    }
+
+    /// Alternative exercises available for the selected day
+    private var alternativesForDay: [ScheduledExercise] {
+        allScheduledExercises
+            .filter { $0.dayOfWeek == selectedDay && $0.isAlternative }
+            .sorted { $0.orderIndex < $1.orderIndex }
     }
 
     private var todayStart: Date {
@@ -264,6 +271,11 @@ struct MyGymView: View {
                                     }
                                 )
                             }
+
+                            // Alternatives section
+                            if !alternativesForDay.isEmpty {
+                                alternativesSection
+                            }
                         }
                         .padding(.horizontal)
                         .padding(.top, 12)
@@ -305,6 +317,94 @@ struct MyGymView: View {
                 )
             }
         }
+    }
+
+    // MARK: - Alternatives Section
+
+    @State private var showAlternatives = false
+
+    private var alternativesSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Button {
+                withAnimation { showAlternatives.toggle() }
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "diamond.fill")
+                        .font(.caption2)
+                        .foregroundStyle(.orange)
+                    Text("Alternatives")
+                        .font(.subheadline.bold())
+                        .foregroundStyle(.orange)
+                    Spacer()
+                    Text("\(alternativesForDay.count)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Image(systemName: showAlternatives ? "chevron.up" : "chevron.down")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .padding(.vertical, 8)
+            }
+            .buttonStyle(.plain)
+
+            if showAlternatives {
+                ForEach(alternativesForDay) { scheduled in
+                    alternativeCard(scheduled)
+                }
+            }
+        }
+        .padding(.top, 4)
+    }
+
+    private func alternativeCard(_ scheduled: ScheduledExercise) -> some View {
+        let typeInfo = scheduled.exercise.flatMap { WorkoutTypeInfo.info(for: $0.appleWorkoutType) }
+        let accentColor = typeInfo?.color ?? .gray
+
+        return HStack(spacing: 12) {
+            // Diamond indicator
+            Image(systemName: "diamond.fill")
+                .font(.system(size: 8))
+                .foregroundStyle(accentColor.opacity(0.6))
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(scheduled.exercise?.name ?? "Unknown")
+                    .font(.subheadline)
+                Text(scheduled.subtitle)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Spacer()
+
+            // Tap to add this alternative to today
+            Button {
+                addAlternativeToDay(scheduled)
+            } label: {
+                Label("Add", systemImage: "plus.circle")
+                    .font(.caption)
+                    .foregroundStyle(accentColor)
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(10)
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(Color(.cardBackground).opacity(0.7))
+                .strokeBorder(accentColor.opacity(0.15), lineWidth: 1)
+        )
+    }
+
+    private func addAlternativeToDay(_ scheduled: ScheduledExercise) {
+        guard let exercise = scheduled.exercise else { return }
+        let daily = DailyExercise(
+            exercise: exercise,
+            date: selectedDayStart,
+            sets: scheduled.sets,
+            reps: scheduled.reps,
+            durationSeconds: scheduled.durationSeconds,
+            orderIndex: itemsForDay.count
+        )
+        modelContext.insert(daily)
     }
 
     // MARK: - Completion Summary

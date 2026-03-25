@@ -10,6 +10,7 @@ final class ScheduledExercise {
     var sets: Int = 3
     var reps: Int = 10
     var durationSeconds: Int = 0
+    var isAlternative: Bool = false
 
     init(
         exercise: Exercise,
@@ -17,7 +18,8 @@ final class ScheduledExercise {
         orderIndex: Int,
         sets: Int? = nil,
         reps: Int? = nil,
-        durationSeconds: Int? = nil
+        durationSeconds: Int? = nil,
+        isAlternative: Bool = false
     ) {
         self.id = UUID()
         self.exercise = exercise
@@ -26,6 +28,7 @@ final class ScheduledExercise {
         self.sets = sets ?? exercise.defaultSets
         self.reps = reps ?? exercise.defaultReps
         self.durationSeconds = durationSeconds ?? exercise.defaultDurationSeconds
+        self.isAlternative = isAlternative
     }
 
     var isTimeBased: Bool {
