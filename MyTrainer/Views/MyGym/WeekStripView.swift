@@ -20,23 +20,23 @@ struct WeekStripView: View {
                 } label: {
                     VStack(spacing: 4) {
                         Text(dayAbbreviations[index])
-                            .font(.caption2)
+                            .font(.system(.caption2, design: .rounded, weight: .semibold))
                         Text(dayNumber(for: index))
-                            .font(.subheadline.bold())
+                            .font(.system(.subheadline, design: .rounded, weight: .heavy))
                     }
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 8)
                     .background {
                         if isToday {
-                            RoundedRectangle(cornerRadius: 10)
-                                .fill(Color.primary)
+                            RoundedRectangle(cornerRadius: 12)
+                                .fill(Color.accentColor)
                         } else if isSelected {
-                            RoundedRectangle(cornerRadius: 10)
+                            RoundedRectangle(cornerRadius: 12)
                                 .strokeBorder(Color.accentColor, lineWidth: 2)
                         }
                     }
                     .foregroundStyle(
-                        isToday ? Color(.systemBackground) :
+                        isToday ? Color.black :
                         isSelected ? Color.accentColor :
                         Color.secondary
                     )

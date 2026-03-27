@@ -28,9 +28,9 @@ struct ExerciseRowCard: View {
     var body: some View {
         HStack(spacing: 0) {
             // Left accent bar
-            RoundedRectangle(cornerRadius: 2)
+            RoundedRectangle(cornerRadius: 3)
                 .fill(accentColor)
-                .frame(width: 4)
+                .frame(width: 6)
                 .padding(.vertical, 4)
 
             VStack(alignment: .leading, spacing: 8) {
@@ -38,7 +38,7 @@ struct ExerciseRowCard: View {
                     VStack(alignment: .leading, spacing: 2) {
                         HStack(spacing: 6) {
                             Text(item.exercise?.name ?? "Unknown")
-                                .font(.headline)
+                                .font(.system(.headline, design: .rounded, weight: .bold))
 
                             // Badge for customised entries
                             if item.isCustomised {
@@ -78,42 +78,47 @@ struct ExerciseRowCard: View {
                     }
                 }
 
-                // Set bubbles
-                HStack(spacing: 6) {
-                    ForEach(1...max(item.sets, 1), id: \.self) { setNum in
-                        SetBubbleView(
-                            setNumber: setNum,
-                            isCompleted: completedSetNumbers.contains(setNum),
-                            isBonus: false,
-                            color: accentColor,
-                            action: { onToggleSet(setNum) }
-                        )
-                    }
+                // Bubbles wrap via adaptive grid; "+ More" sits outside so it isn't squeezed
+                VStack(alignment: .leading, spacing: 0) {
+                    let bubbleColumns = [GridItem(.adaptive(minimum: 44), spacing: 0, alignment: .leading)]
+                    LazyVGrid(columns: bubbleColumns, alignment: .leading, spacing: 0) {
+                        ForEach(1...max(item.sets, 1), id: \.self) { setNum in
+                            SetBubbleView(
+                                setNumber: setNum,
+                                isCompleted: completedSetNumbers.contains(setNum),
+                                isBonus: false,
+                                color: accentColor,
+                                action: { onToggleSet(setNum) }
+                            )
+                        }
 
-                    ForEach(bonusSets) { bonus in
-                        SetBubbleView(
-                            setNumber: bonus.setNumber,
-                            isCompleted: true,
-                            isBonus: true,
-                            color: accentColor.opacity(0.7),
-                            action: {}
-                        )
+                        ForEach(bonusSets) { bonus in
+                            SetBubbleView(
+                                setNumber: bonus.setNumber,
+                                isCompleted: true,
+                                isBonus: true,
+                                color: accentColor.opacity(0.7),
+                                action: {}
+                            )
+                        }
                     }
 
                     Button {
                         onAddBonus()
                     } label: {
                         Text("+ More")
-                            .font(.caption2)
+                            .font(.system(.caption2, design: .rounded, weight: .semibold))
                             .foregroundStyle(accentColor)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 6)
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 9)
                             .background(
                                 Capsule()
-                                    .strokeBorder(accentColor.opacity(0.4), lineWidth: 1)
+                                    .strokeBorder(accentColor.opacity(0.4), lineWidth: 1.5)
                             )
                     }
                     .buttonStyle(.plain)
+                    .padding(.leading, 8)
+                    .padding(.top, 4)
                 }
             }
             .padding(.leading, 12)
@@ -121,9 +126,9 @@ struct ExerciseRowCard: View {
         }
         .padding(12)
         .background(
-            RoundedRectangle(cornerRadius: 16)
+            RoundedRectangle(cornerRadius: 20)
                 .fill(Color(.cardBackground))
-                .shadow(color: .black.opacity(0.05), radius: 2, y: 1)
+                .shadow(color: .accentColor.opacity(0.08), radius: 8, y: 3)
         )
     }
 }

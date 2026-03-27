@@ -2,12 +2,72 @@ import SwiftUI
 import HealthKit
 import Charts
 
+// MARK: - VO2 Rating
+
+enum VO2Rating {
+    case low, good, excellent
+
+    var label: String {
+        switch self {
+        case .low: "Low"
+        case .good: "Good"
+        case .excellent: "Excellent"
+        }
+    }
+
+    var color: Color {
+        switch self {
+        case .low: .red
+        case .good: .orange
+        case .excellent: Color.accentColor
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .low: "arrow.down.circle.fill"
+        case .good: "checkmark.circle.fill"
+        case .excellent: "star.circle.fill"
+        }
+    }
+}
+
+private func vo2Rating(value: Double, age: Int, sex: String) -> VO2Rating {
+    let isMale = sex == "Male"
+    let bounds: (Double, Double)
+    switch age {
+    case 20..<30: bounds = isMale ? (45, 53) : (38, 44)
+    case 30..<40: bounds = isMale ? (41, 50) : (35, 42)
+    case 40..<50: bounds = isMale ? (37, 45) : (32, 40)
+    case 50..<60: bounds = isMale ? (33, 43) : (29, 37)
+    case 60..<70: bounds = isMale ? (31, 41) : (26, 33)
+    default:      bounds = isMale ? (24, 32) : (18, 28)
+    }
+    if value >= bounds.1 { return .excellent }
+    if value >= bounds.0 { return .good }
+    return .low
+}
+
+// MARK: - View
+
 struct ReportsView: View {
     @State private var healthKitManager = HealthKitManager()
     @State private var todayData: DayReportData?
     @State private var lastWeekData: DayReportData?
     @State private var isLoading = true
     @State private var authDenied = false
+
+    // VO2 Max
+    @State private var currentVO2Max: Double? = nil
+    @State private var vo2History: [VO2MaxPoint] = []
+
+    // Week to Date
+    @State private var weekToDateData: WeekToDateData? = nil
+
+    // Settings
+    @AppStorage("userAge") private var userAge: Int = 30
+    @AppStorage("userSex") private var userSex: String = "Male"
+    @State private var showSettings = false
 
     private var todayLabel: String {
         let formatter = DateFormatter()
@@ -35,6 +95,18 @@ struct ReportsView: View {
             }
             .background(Color(.appBackground))
             .navigationTitle("Reports")
+            .toolbar {
+                ToolbarItem(placement: .primaryAction) {
+                    Button {
+                        showSettings = true
+                    } label: {
+                        Image(systemName: "gearshape.fill")
+                    }
+                }
+            }
+            .sheet(isPresented: $showSettings) {
+                SettingsView()
+            }
             .task {
                 do {
                     try await healthKitManager.requestAuthorization()
@@ -54,14 +126,20 @@ struct ReportsView: View {
             VStack(spacing: 20) {
                 dateHeader
 
-                // Section 1: Activity Charts
-                activitySection
+                // Section 1: VO2 Max
+                vo2Section
 
-                // Section 2: Today's Totals
+                // Section 2: Heart Rate
+                heartRateSection
+
+                // Section 3: Today's Totals
                 summarySection
 
-                // Section 3: Heart Rate Detail
-                heartRateSection
+                // Section 4: Week to Date
+                weekSummarySection
+
+                // Section 5: Activity Charts
+                activitySection
             }
             .padding(.horizontal, 16)
             .padding(.bottom, 24)
@@ -82,6 +160,195 @@ struct ReportsView: View {
         .padding(.vertical, 8)
     }
 
+    // MARK: - VO2 Max Section
+
+    private var vo2Section: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            // Header
+            HStack {
+                Image(systemName: "lungs.fill")
+                    .foregroundStyle(Color.accentColor)
+                Text("VO2 Max")
+                    .font(.system(.headline, design: .rounded, weight: .bold))
+                    .foregroundStyle(Color.accentColor)
+                Spacer()
+                Button {
+                    showSettings = true
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "person.fill")
+                            .font(.caption2)
+                        Text("\(userAge) · \(userSex)")
+                            .font(.caption)
+                    }
+                    .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(.bottom, 14)
+
+            if let vo2 = currentVO2Max {
+                let rating = vo2Rating(value: vo2, age: userAge, sex: userSex)
+
+                // Current reading + rating
+                HStack(alignment: .bottom, spacing: 0) {
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack(alignment: .firstTextBaseline, spacing: 6) {
+                            Text(String(format: "%.1f", vo2))
+                                .font(.system(size: 48, weight: .heavy, design: .rounded))
+                                .foregroundStyle(rating.color)
+                            Text("ml/kg/min")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .padding(.bottom, 8)
+                        }
+
+                        // Rating badge
+                        HStack(spacing: 5) {
+                            Image(systemName: rating.icon)
+                            Text(rating.label)
+                                .font(.system(.subheadline, design: .rounded, weight: .bold))
+                        }
+                        .foregroundStyle(rating.color)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                        .background(
+                            Capsule().fill(rating.color.opacity(0.15))
+                        )
+                    }
+
+                    Spacer()
+
+                    // Age-sex context
+                    VStack(alignment: .trailing, spacing: 4) {
+                        Text("For your age & sex")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                        let (lo, hi) = vo2Range(age: userAge, sex: userSex)
+                        Text("Good: \(Int(lo))–\(Int(hi))+")
+                            .font(.system(.caption, design: .rounded, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .padding(.bottom, 16)
+
+                // 2-month trend chart
+                if vo2History.count > 1 {
+                    Text("2-Month Trend")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .padding(.bottom, 6)
+
+                    vo2TrendChart
+                } else {
+                    Text("Not enough data for trend — keep wearing your Apple Watch during workouts.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .padding(.vertical, 8)
+                }
+            } else {
+                HStack(spacing: 10) {
+                    Image(systemName: "lungs")
+                        .font(.title2)
+                        .foregroundStyle(.secondary)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("No VO2 Max data")
+                            .font(.system(.subheadline, design: .rounded, weight: .semibold))
+                        Text("Wear your Apple Watch during outdoor runs or walks to generate readings.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .padding(.vertical, 8)
+            }
+        }
+        .padding(16)
+        .background(cardBackground)
+    }
+
+    private var vo2TrendChart: some View {
+        let minVal = (vo2History.map(\.value).min() ?? 0) - 2
+        let maxVal = (vo2History.map(\.value).max() ?? 60) + 2
+
+        return Chart {
+            ForEach(vo2History) { point in
+                AreaMark(
+                    x: .value("Date", point.date),
+                    y: .value("VO2", point.value)
+                )
+                .foregroundStyle(
+                    LinearGradient(
+                        colors: [Color.accentColor.opacity(0.3), Color.accentColor.opacity(0.02)],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+                )
+                .interpolationMethod(.catmullRom)
+            }
+            ForEach(vo2History) { point in
+                LineMark(
+                    x: .value("Date", point.date),
+                    y: .value("VO2", point.value)
+                )
+                .foregroundStyle(Color.accentColor)
+                .lineStyle(StrokeStyle(lineWidth: 2.5))
+                .interpolationMethod(.catmullRom)
+            }
+            // Highlight the most recent point
+            if let latest = vo2History.last {
+                PointMark(
+                    x: .value("Date", latest.date),
+                    y: .value("VO2", latest.value)
+                )
+                .foregroundStyle(Color.accentColor)
+                .symbolSize(60)
+                .annotation(position: .top, spacing: 4) {
+                    Text(String(format: "%.1f", latest.value))
+                        .font(.system(size: 10, weight: .bold, design: .rounded))
+                        .foregroundStyle(Color.accentColor)
+                }
+            }
+        }
+        .chartYScale(domain: minVal...maxVal)
+        .chartPlotStyle { plotArea in
+            plotArea.clipped()
+        }
+        .chartYAxis {
+            AxisMarks(position: .leading) { value in
+                AxisValueLabel {
+                    if let v = value.as(Double.self) {
+                        Text(String(format: "%.0f", v))
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                AxisGridLine(stroke: StrokeStyle(lineWidth: 0.5, dash: [4]))
+                    .foregroundStyle(Color.secondary.opacity(0.12))
+            }
+        }
+        .chartXAxis {
+            AxisMarks(values: .stride(by: .month)) { value in
+                AxisValueLabel(format: .dateTime.month(.abbreviated))
+                    .font(.caption2)
+            }
+        }
+        .frame(height: 180)
+        .clipped()
+    }
+
+    /// Returns the (good lower, excellent upper) bounds for a given age/sex.
+    private func vo2Range(age: Int, sex: String) -> (Double, Double) {
+        let isMale = sex == "Male"
+        switch age {
+        case 20..<30: return isMale ? (45, 53) : (38, 44)
+        case 30..<40: return isMale ? (41, 50) : (35, 42)
+        case 40..<50: return isMale ? (37, 45) : (32, 40)
+        case 50..<60: return isMale ? (33, 43) : (29, 37)
+        case 60..<70: return isMale ? (31, 41) : (26, 33)
+        default:      return isMale ? (24, 32) : (18, 28)
+        }
+    }
+
     // MARK: - Activity Section
 
     private var activitySection: some View {
@@ -90,7 +357,7 @@ struct ReportsView: View {
 
             // Exercise Amount Chart — cyan
             chartCard(title: "Exercise", todayColor: .cyan, lastWeekColor: .cyan.opacity(0.3)) {
-                hourlyBarChart(
+                hourlyLineChart(
                     todayEntries: todayData?.hourlyExerciseMinutes ?? [],
                     lastWeekEntries: lastWeekData?.hourlyExerciseMinutes ?? [],
                     unit: "min",
@@ -101,7 +368,7 @@ struct ReportsView: View {
 
             // Calories Chart — yellow
             chartCard(title: "Active Calories", todayColor: .yellow, lastWeekColor: .yellow.opacity(0.3)) {
-                hourlyBarChart(
+                hourlyLineChart(
                     todayEntries: todayData?.hourlyCalories ?? [],
                     lastWeekEntries: lastWeekData?.hourlyCalories ?? [],
                     unit: "kcal",
@@ -112,7 +379,7 @@ struct ReportsView: View {
 
             // Steps Chart — orange
             chartCard(title: "Steps", todayColor: .orange, lastWeekColor: .orange.opacity(0.3)) {
-                hourlyBarChart(
+                hourlyLineChart(
                     todayEntries: todayData?.hourlySteps ?? [],
                     lastWeekEntries: lastWeekData?.hourlySteps ?? [],
                     unit: "steps",
@@ -158,6 +425,81 @@ struct ReportsView: View {
                 )
             }
         }
+    }
+
+    // MARK: - Week to Date Section
+
+    private var weekSummarySection: some View {
+        VStack(spacing: 12) {
+            // Header with date range
+            HStack(spacing: 6) {
+                Image(systemName: "calendar.badge.clock")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                Text("Week to Date")
+                    .font(.title3.bold())
+                Spacer()
+                if let data = weekToDateData {
+                    Text(weekRangeLabel(from: data.weekStart))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .padding(.top, 4)
+
+            HStack(spacing: 12) {
+                weekTile(
+                    title: "Distance",
+                    icon: "figure.walk.motion",
+                    value: weekToDateData?.totalDistanceKm ?? 0,
+                    formatter: { String(format: "%.1f km", $0) }
+                )
+                weekTile(
+                    title: "Core",
+                    icon: "figure.core.training",
+                    value: weekToDateData?.coreTrainingMinutes ?? 0,
+                    formatter: { "\(Int($0)) min" }
+                )
+                weekTile(
+                    title: "Strength",
+                    icon: "dumbbell.fill",
+                    value: weekToDateData?.strengthTrainingMinutes ?? 0,
+                    formatter: { "\(Int($0)) min" }
+                )
+            }
+        }
+    }
+
+    private func weekTile(title: String, icon: String, value: Double, formatter: (Double) -> String) -> some View {
+        VStack(spacing: 8) {
+            Image(systemName: icon)
+                .font(.title3)
+                .foregroundStyle(Color.accentColor)
+
+            Text(title)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            Text(formatter(value))
+                .font(.system(.subheadline, design: .rounded, weight: .bold))
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+
+            Text("Mon – Today")
+                .font(.caption2)
+                .foregroundStyle(.secondary.opacity(0.7))
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 14)
+        .padding(.horizontal, 8)
+        .background(cardBackground)
+    }
+
+    private func weekRangeLabel(from monday: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "MMM d"
+        let today = Date()
+        return "\(formatter.string(from: monday)) – \(formatter.string(from: today))"
     }
 
     // MARK: - Heart Rate Section (Apple Health style, today only)
@@ -264,8 +606,8 @@ struct ReportsView: View {
                     .font(.subheadline.bold())
                 Spacer()
                 HStack(spacing: 12) {
-                    legendDot(label: "Today", color: todayColor)
-                    legendDot(label: "Last week", color: lastWeekColor)
+                    legendLine(label: "Today", color: todayColor)
+                    legendLine(label: "Last week", color: lastWeekColor, dashed: true)
                 }
             }
 
@@ -275,31 +617,82 @@ struct ReportsView: View {
         .background(cardBackground)
     }
 
-    private func legendDot(label: String, color: Color) -> some View {
-        HStack(spacing: 4) {
-            RoundedRectangle(cornerRadius: 2)
-                .fill(color)
-                .frame(width: 10, height: 10)
+    private func legendLine(label: String, color: Color, dashed: Bool = false) -> some View {
+        HStack(spacing: 5) {
+            if dashed {
+                HStack(spacing: 2) {
+                    ForEach(0..<3, id: \.self) { _ in
+                        RoundedRectangle(cornerRadius: 1)
+                            .fill(color)
+                            .frame(width: 5, height: 2)
+                    }
+                }
+            } else {
+                RoundedRectangle(cornerRadius: 1)
+                    .fill(color)
+                    .frame(width: 18, height: 2.5)
+            }
             Text(label)
                 .font(.caption2)
                 .foregroundStyle(.secondary)
         }
     }
 
-    // MARK: - Hourly Bar Chart
+    // MARK: - Hourly Line Chart
 
-    private func hourlyBarChart(todayEntries: [HourlyEntry], lastWeekEntries: [HourlyEntry], unit: String, todayColor: Color, lastWeekColor: Color) -> some View {
+    private func hourlyLineChart(todayEntries: [HourlyEntry], lastWeekEntries: [HourlyEntry], unit: String, todayColor: Color, lastWeekColor: Color) -> some View {
         let combined = buildHourlyChartData(today: todayEntries, lastWeek: lastWeekEntries)
+        let todayPoints = combined.filter { $0.series == "Today" }
+        let lastWeekPoints = combined.filter { $0.series == "Last week" }
 
-        return Chart(combined) { item in
-            BarMark(
-                x: .value("Hour", item.sortOrder),
-                y: .value(unit, item.value)
-            )
-            .foregroundStyle(item.series == "Today" ? todayColor : lastWeekColor)
-            .position(by: .value("Series", item.series))
-            .cornerRadius(3)
+        return Chart {
+            // Last week — dashed muted line with very subtle fill (drawn behind)
+            ForEach(lastWeekPoints) { item in
+                AreaMark(
+                    x: .value("Hour", item.sortOrder),
+                    y: .value(unit, item.value)
+                )
+                .foregroundStyle(lastWeekColor.opacity(0.10))
+                .interpolationMethod(.catmullRom)
+            }
+            ForEach(lastWeekPoints) { item in
+                LineMark(
+                    x: .value("Hour", item.sortOrder),
+                    y: .value(unit, item.value),
+                    series: .value("Series", "Last week")
+                )
+                .foregroundStyle(lastWeekColor.opacity(0.55))
+                .lineStyle(StrokeStyle(lineWidth: 1.5, dash: [5, 4]))
+                .interpolationMethod(.catmullRom)
+            }
+
+            // Today — bold solid line with gradient area on top
+            ForEach(todayPoints) { item in
+                AreaMark(
+                    x: .value("Hour", item.sortOrder),
+                    y: .value(unit, item.value)
+                )
+                .foregroundStyle(
+                    LinearGradient(
+                        colors: [todayColor.opacity(0.35), todayColor.opacity(0.02)],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+                )
+                .interpolationMethod(.catmullRom)
+            }
+            ForEach(todayPoints) { item in
+                LineMark(
+                    x: .value("Hour", item.sortOrder),
+                    y: .value(unit, item.value),
+                    series: .value("Series", "Today")
+                )
+                .foregroundStyle(todayColor)
+                .lineStyle(StrokeStyle(lineWidth: 2.5))
+                .interpolationMethod(.catmullRom)
+            }
         }
+        .chartYScale(domain: .automatic(includesZero: true))
         .chartYAxis {
             AxisMarks(position: .leading) { value in
                 AxisValueLabel {
@@ -310,7 +703,7 @@ struct ReportsView: View {
                     }
                 }
                 AxisGridLine(stroke: StrokeStyle(lineWidth: 0.5, dash: [4]))
-                    .foregroundStyle(Color.secondary.opacity(0.2))
+                    .foregroundStyle(Color.secondary.opacity(0.12))
             }
         }
         .chartXAxis {
@@ -324,7 +717,7 @@ struct ReportsView: View {
                 }
             }
         }
-        .frame(height: 160)
+        .frame(minHeight: 160, maxHeight: 200)
     }
 
     // MARK: - Workout Heart Rate Card
@@ -390,7 +783,7 @@ struct ReportsView: View {
         VStack(spacing: 8) {
             Image(systemName: icon)
                 .font(.title3)
-                .foregroundStyle(.green)
+                .foregroundStyle(Color.accentColor)
 
             Text(title)
                 .font(.caption)
@@ -433,25 +826,25 @@ struct ReportsView: View {
         }
 
         return Chart(chartPoints) { point in
-            LineMark(
-                x: .value("Time", point.minutesSinceMidnight),
-                y: .value("BPM", point.bpm)
-            )
-            .foregroundStyle(Color.red)
-            .lineStyle(StrokeStyle(lineWidth: 1.5))
-            .interpolationMethod(.catmullRom)
-
             AreaMark(
                 x: .value("Time", point.minutesSinceMidnight),
                 y: .value("BPM", point.bpm)
             )
             .foregroundStyle(
                 LinearGradient(
-                    colors: [Color.red.opacity(0.2), Color.red.opacity(0.02)],
+                    colors: [Color.red.opacity(0.3), Color.red.opacity(0.02)],
                     startPoint: .top,
                     endPoint: .bottom
                 )
             )
+            .interpolationMethod(.catmullRom)
+
+            LineMark(
+                x: .value("Time", point.minutesSinceMidnight),
+                y: .value("BPM", point.bpm)
+            )
+            .foregroundStyle(Color.red)
+            .lineStyle(StrokeStyle(lineWidth: 2.5))
             .interpolationMethod(.catmullRom)
         }
         .chartYAxis {
@@ -506,9 +899,9 @@ struct ReportsView: View {
     // MARK: - Styling
 
     private var cardBackground: some View {
-        RoundedRectangle(cornerRadius: 14)
+        RoundedRectangle(cornerRadius: 20)
             .fill(Color(.cardBackground))
-            .shadow(color: .black.opacity(0.04), radius: 2, y: 1)
+            .shadow(color: Color.accentColor.opacity(0.07), radius: 8, y: 3)
     }
 
     private var authDeniedView: some View {
@@ -539,8 +932,14 @@ struct ReportsView: View {
         isLoading = true
         async let today = healthKitManager.fetchDayReport(for: Date())
         async let lastWeek = healthKitManager.fetchDayReport(for: healthKitManager.sameDayLastWeek())
+        async let vo2Current = healthKitManager.fetchCurrentVO2Max()
+        async let vo2Trend = healthKitManager.fetchVO2MaxHistory(months: 2)
+        async let weekToDate = healthKitManager.fetchWeekToDate()
         todayData = await today
         lastWeekData = await lastWeek
+        currentVO2Max = await vo2Current
+        vo2History = await vo2Trend
+        weekToDateData = await weekToDate
         isLoading = false
     }
 

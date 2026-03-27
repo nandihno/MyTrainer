@@ -249,7 +249,7 @@ struct MyGymView: View {
                                 .font(.body.bold())
                         }
                         .buttonStyle(.borderedProminent)
-                        .tint(.green)
+                        .tint(.accentColor)
                         .disabled(allExercises.isEmpty)
                     }
                     .frame(maxHeight: .infinity)
@@ -414,7 +414,7 @@ struct MyGymView: View {
             Divider()
             HStack {
                 Text("\(completedSetsCountForDay) of \(totalSetsForDay) sets completed")
-                    .font(.subheadline)
+                    .font(.system(.subheadline, design: .rounded, weight: .semibold))
                     .foregroundStyle(.secondary)
                 Spacer()
             }
@@ -422,21 +422,21 @@ struct MyGymView: View {
 
             GeometryReader { geo in
                 ZStack(alignment: .leading) {
-                    RoundedRectangle(cornerRadius: 2)
-                        .fill(Color.secondary.opacity(0.2))
-                        .frame(height: 4)
+                    RoundedRectangle(cornerRadius: 4)
+                        .fill(Color.secondary.opacity(0.15))
+                        .frame(height: 6)
 
-                    RoundedRectangle(cornerRadius: 2)
+                    RoundedRectangle(cornerRadius: 4)
                         .fill(mostCommonTypeColor)
                         .frame(
                             width: totalSetsForDay > 0
                                 ? geo.size.width * CGFloat(completedSetsCountForDay) / CGFloat(totalSetsForDay)
                                 : 0,
-                            height: 4
+                            height: 6
                         )
                 }
             }
-            .frame(height: 4)
+            .frame(height: 6)
             .padding(.horizontal)
             .padding(.bottom, 8)
         }

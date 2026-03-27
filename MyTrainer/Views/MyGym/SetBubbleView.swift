@@ -14,26 +14,29 @@ struct SetBubbleView: View {
                     .fill(isCompleted ? color : Color.clear)
                     .overlay(
                         Circle()
-                            .strokeBorder(color, lineWidth: 2)
+                            .strokeBorder(color, lineWidth: 2.5)
                     )
-                    .frame(width: 32, height: 32)
+                    .frame(width: 44, height: 44)
 
                 if isCompleted {
                     if isBonus {
                         Image(systemName: "plus")
-                            .font(.caption2.bold())
+                            .font(.caption.bold())
                             .foregroundStyle(.white)
                     } else {
                         Image(systemName: "checkmark")
-                            .font(.caption2.bold())
+                            .font(.caption.bold())
                             .foregroundStyle(.white)
                     }
                 } else {
                     Text("\(setNumber)")
-                        .font(.caption2.bold())
+                        .font(.system(.caption, design: .rounded, weight: .bold))
                         .foregroundStyle(color)
                 }
             }
+            // Extra invisible padding expands the tap area beyond the circle
+            .padding(8)
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
     }

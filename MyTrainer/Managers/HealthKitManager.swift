@@ -43,6 +43,19 @@ struct HeartRateStats: Sendable {
     let highest: Double?
 }
 
+struct WeekToDateData: Sendable {
+    let totalDistanceKm: Double
+    let coreTrainingMinutes: Double
+    let strengthTrainingMinutes: Double
+    let weekStart: Date
+}
+
+struct VO2MaxPoint: Identifiable, Sendable {
+    let id = UUID()
+    let date: Date
+    let value: Double   // ml/kg/min
+}
+
 struct DayReportData: Sendable {
     let date: Date
     let hourlyExerciseMinutes: [HourlyEntry]
@@ -77,6 +90,7 @@ final class HealthKitManager {
             HKQuantityType(.heartRate),
             HKQuantityType(.distanceWalkingRunning),
             HKQuantityType(.stepCount),
+            HKQuantityType(.vo2Max),
         ]
 
         try await healthStore.requestAuthorization(toShare: [], read: readTypes)
@@ -516,6 +530,80 @@ final class HealthKitManager {
     /// Returns the same day of the week from last week
     func sameDayLastWeek(from date: Date = Date()) -> Date {
         Calendar.current.date(byAdding: .weekOfYear, value: -1, to: date)!
+    }
+
+    // MARK: - Week to Date Summary
+
+    /// Cumulative Distance, Core, and Strength totals from Monday 12:01 am through now.
+    func fetchWeekToDate() async -> WeekToDateData {
+        var cal = Calendar.current
+        cal.firstWeekday = 2 // Monday
+        let now = Date()
+        guard let weekInterval = cal.dateInterval(of: .weekOfYear, for: now) else {
+            return WeekToDateData(totalDistanceKm: 0, coreTrainingMinutes: 0, strengthTrainingMinutes: 0, weekStart: now)
+        }
+        // Monday 12:01 am (1 minute past midnight so it's clearly "start of week")
+        let monday = cal.date(byAdding: .minute, value: 1, to: weekInterval.start)!
+
+        async let distance = fetchTotalDistance(from: monday, to: now)
+        async let core = fetchWorkoutMinutes(from: monday, to: now, activityTypes: [.coreTraining])
+        async let strength = fetchWorkoutMinutes(from: monday, to: now, activityTypes: [.traditionalStrengthTraining, .functionalStrengthTraining])
+
+        return await WeekToDateData(
+            totalDistanceKm: distance,
+            coreTrainingMinutes: core,
+            strengthTrainingMinutes: strength,
+            weekStart: monday
+        )
+    }
+
+    // MARK: - VO2 Max
+
+    private var vo2Unit: HKUnit {
+        HKUnit.literUnit(with: .milli)
+            .unitDivided(by: HKUnit.gramUnit(with: .kilo)
+            .unitMultiplied(by: .minute()))
+    }
+
+    /// Most recent VO2 Max sample from HealthKit.
+    func fetchCurrentVO2Max() async -> Double? {
+        let sortDescriptor = NSSortDescriptor(key: HKSampleSortIdentifierStartDate, ascending: false)
+        return await withCheckedContinuation { continuation in
+            let query = HKSampleQuery(
+                sampleType: HKQuantityType(.vo2Max),
+                predicate: nil,
+                limit: 1,
+                sortDescriptors: [sortDescriptor]
+            ) { [vo2Unit] _, samples, _ in
+                let value = (samples as? [HKQuantitySample])?.first?
+                    .quantity.doubleValue(for: vo2Unit)
+                continuation.resume(returning: value)
+            }
+            healthStore.execute(query)
+        }
+    }
+
+    /// VO2 Max readings over the last `months` months, oldest first.
+    func fetchVO2MaxHistory(months: Int = 2) async -> [VO2MaxPoint] {
+        let endDate = Date()
+        let startDate = Calendar.current.date(byAdding: .month, value: -months, to: endDate)!
+        let predicate = HKQuery.predicateForSamples(withStart: startDate, end: endDate, options: .strictStartDate)
+        let sortDescriptor = NSSortDescriptor(key: HKSampleSortIdentifierStartDate, ascending: true)
+
+        return await withCheckedContinuation { continuation in
+            let query = HKSampleQuery(
+                sampleType: HKQuantityType(.vo2Max),
+                predicate: predicate,
+                limit: HKObjectQueryNoLimit,
+                sortDescriptors: [sortDescriptor]
+            ) { [vo2Unit] _, samples, _ in
+                let points = (samples as? [HKQuantitySample])?.map {
+                    VO2MaxPoint(date: $0.startDate, value: $0.quantity.doubleValue(for: vo2Unit))
+                } ?? []
+                continuation.resume(returning: points)
+            }
+            healthStore.execute(query)
+        }
     }
 
     // MARK: - Helpers
