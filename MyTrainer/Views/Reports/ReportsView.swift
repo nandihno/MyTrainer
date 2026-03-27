@@ -2,6 +2,57 @@ import SwiftUI
 import HealthKit
 import Charts
 
+// MARK: - VO2 Trend
+
+enum VO2Trend {
+    case improving(Double)   // positive delta
+    case declining(Double)   // negative delta
+    case stable
+
+    var description: String {
+        switch self {
+        case .improving: "Improving"
+        case .declining: "Declining"
+        case .stable:    "Stable"
+        }
+    }
+
+    var detail: String {
+        switch self {
+        case .improving(let d): return String(format: "+%.1f over 2 months", d)
+        case .declining(let d): return String(format: "%.1f over 2 months", d)
+        case .stable:           return "No significant change"
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .improving: "arrow.up.right"
+        case .declining: "arrow.down.right"
+        case .stable:    "arrow.right"
+        }
+    }
+
+    var color: Color {
+        switch self {
+        case .improving: Color.accentColor
+        case .declining: .red
+        case .stable:    .orange
+        }
+    }
+}
+
+private func computeVO2Trend(_ history: [VO2MaxPoint]) -> VO2Trend? {
+    guard history.count >= 4 else { return nil }
+    // Compare average of the first third vs the last third for robustness
+    let slice = max(1, history.count / 3)
+    let earlyAvg = history.prefix(slice).map(\.value).reduce(0, +) / Double(slice)
+    let recentAvg = history.suffix(slice).map(\.value).reduce(0, +) / Double(slice)
+    let delta = recentAvg - earlyAvg
+    if abs(delta) < 0.5 { return .stable }
+    return delta > 0 ? .improving(delta) : .declining(delta)
+}
+
 // MARK: - VO2 Rating
 
 enum VO2Rating {
@@ -234,12 +285,32 @@ struct ReportsView: View {
 
                 // 2-month trend chart
                 if vo2History.count > 1 {
-                    Text("2-Month Trend")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .padding(.bottom, 6)
+                    let trend = computeVO2Trend(vo2History)
+                    HStack(alignment: .center, spacing: 8) {
+                        Text("2-Month Trend")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
 
-                    vo2TrendChart
+                        if let trend {
+                            HStack(spacing: 4) {
+                                Image(systemName: trend.icon)
+                                    .font(.system(size: 10, weight: .bold))
+                                Text(trend.description)
+                                    .font(.system(size: 11, weight: .bold, design: .rounded))
+                            }
+                            .foregroundStyle(trend.color)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 3)
+                            .background(Capsule().fill(trend.color.opacity(0.15)))
+
+                            Text(trend.detail)
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .padding(.bottom, 6)
+
+                    vo2TrendChart(trendColor: trend?.color ?? Color.accentColor)
                 } else {
                     Text("Not enough data for trend — keep wearing your Apple Watch during workouts.")
                         .font(.caption)
@@ -266,7 +337,7 @@ struct ReportsView: View {
         .background(cardBackground)
     }
 
-    private var vo2TrendChart: some View {
+    private func vo2TrendChart(trendColor: Color) -> some View {
         let minVal = (vo2History.map(\.value).min() ?? 0) - 2
         let maxVal = (vo2History.map(\.value).max() ?? 60) + 2
 
@@ -278,7 +349,7 @@ struct ReportsView: View {
                 )
                 .foregroundStyle(
                     LinearGradient(
-                        colors: [Color.accentColor.opacity(0.3), Color.accentColor.opacity(0.02)],
+                        colors: [trendColor.opacity(0.3), trendColor.opacity(0.02)],
                         startPoint: .top,
                         endPoint: .bottom
                     )
@@ -290,7 +361,7 @@ struct ReportsView: View {
                     x: .value("Date", point.date),
                     y: .value("VO2", point.value)
                 )
-                .foregroundStyle(Color.accentColor)
+                .foregroundStyle(trendColor)
                 .lineStyle(StrokeStyle(lineWidth: 2.5))
                 .interpolationMethod(.catmullRom)
             }
@@ -300,12 +371,12 @@ struct ReportsView: View {
                     x: .value("Date", latest.date),
                     y: .value("VO2", latest.value)
                 )
-                .foregroundStyle(Color.accentColor)
+                .foregroundStyle(trendColor)
                 .symbolSize(60)
                 .annotation(position: .top, spacing: 4) {
                     Text(String(format: "%.1f", latest.value))
                         .font(.system(size: 10, weight: .bold, design: .rounded))
-                        .foregroundStyle(Color.accentColor)
+                        .foregroundStyle(trendColor)
                 }
             }
         }
@@ -941,6 +1012,91 @@ struct ReportsView: View {
         vo2History = await vo2Trend
         weekToDateData = await weekToDate
         isLoading = false
+        print(reportSummary)
+    }
+
+    // MARK: - Report Summary (debug + AI agent context)
+
+    /// Structured plain-text snapshot of the user's health data for the current day.
+    /// Suitable for logging and for passing as context to an AI agent.
+    var reportSummary: String {
+        let dateFormatter = DateFormatter()
+        dateFormatter.dateFormat = "EEEE, MMM d, yyyy"
+        let dateStr = dateFormatter.string(from: Date())
+
+        // ---- VO2 Max ----
+        let vo2Line: String
+        if let vo2 = currentVO2Max {
+            let rating = vo2Rating(value: vo2, age: userAge, sex: userSex)
+            let (lo, hi) = vo2Range(age: userAge, sex: userSex)
+            let trendLine: String
+            if let trend = computeVO2Trend(vo2History) {
+                trendLine = "\(trend.description) (\(trend.detail))"
+            } else {
+                trendLine = vo2History.count < 4 ? "Insufficient data for trend" : "Stable"
+            }
+            vo2Line = """
+            VO2 Max: \(String(format: "%.1f", vo2)) ml/kg/min
+            VO2 Rating: \(rating.label) (for age \(userAge), \(userSex) | Good range: \(Int(lo))–\(Int(hi))+)
+            VO2 Trend: \(trendLine)
+            """
+        } else {
+            vo2Line = "VO2 Max: No data available"
+        }
+
+        // ---- Heart Rate ----
+        let hr = todayData?.heartRateStats ?? HeartRateStats(average: nil, lowest: nil, highest: nil)
+        let hrAvg  = hr.average.map  { "\(Int($0)) BPM" } ?? "N/A"
+        let hrMin  = hr.lowest.map   { "\(Int($0)) BPM" } ?? "N/A"
+        let hrMax  = hr.highest.map  { "\(Int($0)) BPM" } ?? "N/A"
+        let hrWorkout = todayData?.workoutHeartRateAvg.map { "\(Int($0)) BPM" } ?? "N/A"
+        let heartRateLine = """
+        Heart Rate Avg: \(hrAvg)
+        Heart Rate Min: \(hrMin)
+        Heart Rate Max: \(hrMax)
+        Avg HR During Workouts: \(hrWorkout)
+        """
+
+        // ---- Today's Summary ----
+        let distance  = todayData?.totalDistanceKm ?? 0
+        let core      = todayData?.coreTrainingMinutes ?? 0
+        let strength  = todayData?.strengthTrainingMinutes ?? 0
+        let todaySummaryLine = """
+        Distance: \(String(format: "%.1f", distance)) km
+        Core Training: \(Int(core)) min
+        Strength Training: \(Int(strength)) min
+        """
+
+        // ---- Activity Totals ----
+        let totalExerciseMin = todayData?.hourlyExerciseMinutes.reduce(0) { $0 + $1.value } ?? 0
+        let totalCalories    = todayData?.hourlyCalories.reduce(0)        { $0 + $1.value } ?? 0
+        let totalSteps       = todayData?.hourlySteps.reduce(0)           { $0 + $1.value } ?? 0
+        let activityLine = """
+        Total Exercise Minutes: \(Int(totalExerciseMin)) min
+        Active Calories: \(Int(totalCalories)) kcal
+        Steps: \(Int(totalSteps))
+        """
+
+        return """
+        ==========================================
+        MyTrainer Daily Health Report
+        Date: \(dateStr)
+        User: Age \(userAge), \(userSex)
+        ==========================================
+
+        [VO2 Max]
+        \(vo2Line)
+
+        [Heart Rate]
+        \(heartRateLine)
+
+        [Today's Summary]
+        \(todaySummaryLine)
+
+        [Activity Totals]
+        \(activityLine)
+        ==========================================
+        """
     }
 
     /// Short format for x-axis: "12 am", "3 am", "6 am", "9 am", "12 pm", "3 pm", "6 pm", "9 pm"
