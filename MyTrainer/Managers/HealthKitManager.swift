@@ -414,12 +414,15 @@ final class HealthKitManager {
         return await fetchAverageHeartRate(for: workouts)
     }
 
-    /// Total walking + running distance (indoor + outdoor) in km
+    /// Total walking + running distance (indoor + outdoor) in km.
+    /// The general HKStatisticsQuery can miss indoor (treadmill) distance due to HealthKit
+    /// source deduplication favouring iPhone (which has no GPS indoors). We supplement it
+    /// by reading distance embedded in indoor walking/running workout objects.
     private func fetchTotalDistance(from start: Date, to end: Date) async -> Double {
         let distanceType = HKQuantityType(.distanceWalkingRunning)
         let predicate = HKQuery.predicateForSamples(withStart: start, end: end, options: .strictStartDate)
 
-        return await withCheckedContinuation { continuation in
+        let generalKm: Double = await withCheckedContinuation { continuation in
             let query = HKStatisticsQuery(
                 quantityType: distanceType,
                 quantitySamplePredicate: predicate,
@@ -430,6 +433,22 @@ final class HealthKitManager {
             }
             healthStore.execute(query)
         }
+
+        // Fetch indoor walking and running workouts and sum their embedded distance.
+        // workout.statistics(for:) is the reliable source for treadmill distance recorded by Apple Watch.
+        async let indoorRunning = fetchWorkouts(activityType: .running, from: start, to: end, isIndoor: true)
+        async let indoorWalking = fetchWorkouts(activityType: .walking, from: start, to: end, isIndoor: true)
+        let indoorWorkouts = await indoorRunning + indoorWalking
+
+        let indoorKm = indoorWorkouts.reduce(0.0) { total, workout in
+            let km = workout.statistics(for: distanceType)?
+                .sumQuantity()?
+                .doubleValue(for: .meterUnit(with: .kilo)) ?? 0
+            return total + km
+        }
+
+        // indoorKm covers what the general query misses; they don't overlap for treadmill sessions.
+        return generalKm + indoorKm
     }
 
     /// Total workout minutes for specified activity types
