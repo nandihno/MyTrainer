@@ -626,7 +626,7 @@ struct ReportsView: View {
                     .frame(maxWidth: .infinity, alignment: .center)
                     .padding(.vertical, 20)
             } else {
-                heartRateLineGraph(points: todayPoints)
+                HeartRateChartView(points: todayPoints)
             }
         }
         .padding(16)
@@ -884,70 +884,6 @@ struct ReportsView: View {
         .background(cardBackground)
     }
 
-    // MARK: - Heart Rate Line Graph (today only)
-
-    private func heartRateLineGraph(points: [HeartRatePoint]) -> some View {
-        let dayStart = Calendar.current.startOfDay(for: Date())
-
-        let chartPoints = points.map { point in
-            HRChartPoint(
-                minutesSinceMidnight: point.timestamp.timeIntervalSince(dayStart) / 60.0,
-                bpm: point.bpm
-            )
-        }
-
-        return Chart(chartPoints) { point in
-            AreaMark(
-                x: .value("Time", point.minutesSinceMidnight),
-                y: .value("BPM", point.bpm)
-            )
-            .foregroundStyle(
-                LinearGradient(
-                    colors: [Color.red.opacity(0.3), Color.red.opacity(0.02)],
-                    startPoint: .top,
-                    endPoint: .bottom
-                )
-            )
-            .interpolationMethod(.catmullRom)
-
-            LineMark(
-                x: .value("Time", point.minutesSinceMidnight),
-                y: .value("BPM", point.bpm)
-            )
-            .foregroundStyle(Color.red)
-            .lineStyle(StrokeStyle(lineWidth: 2.5))
-            .interpolationMethod(.catmullRom)
-        }
-        .chartYAxis {
-            AxisMarks(position: .trailing) { value in
-                AxisValueLabel {
-                    if let v = value.as(Double.self) {
-                        Text("\(Int(v))")
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-                AxisGridLine(stroke: StrokeStyle(lineWidth: 0.5))
-                    .foregroundStyle(Color.secondary.opacity(0.2))
-            }
-        }
-        .chartXAxis {
-            AxisMarks(values: Array(stride(from: 0.0, through: 1260.0, by: 180.0))) { value in
-                AxisValueLabel {
-                    if let mins = value.as(Double.self) {
-                        let hour = Int(mins) / 60
-                        Text(hourStringFull(hour))
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-                AxisGridLine(stroke: StrokeStyle(lineWidth: 0.5, dash: [2]))
-                    .foregroundStyle(Color.secondary.opacity(0.15))
-            }
-        }
-        .frame(height: 160)
-    }
-
     // MARK: - Change Indicator
 
     @ViewBuilder
@@ -1134,10 +1070,4 @@ private struct HourlyChartItem: Identifiable {
     let sortOrder: Int
     let value: Double
     let series: String
-}
-
-private struct HRChartPoint: Identifiable {
-    let id = UUID()
-    let minutesSinceMidnight: Double
-    let bpm: Double
 }
