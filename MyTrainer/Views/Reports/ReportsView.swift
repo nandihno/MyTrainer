@@ -115,6 +115,9 @@ struct ReportsView: View {
     // Week to Date
     @State private var weekToDateData: WeekToDateData? = nil
 
+    // Last refresh time
+    @State private var lastRefreshed: Date = Date()
+
     // Settings
     @AppStorage("userAge") private var userAge: Int = 30
     @AppStorage("userSex") private var userSex: String = "Male"
@@ -123,6 +126,12 @@ struct ReportsView: View {
     private var todayLabel: String {
         let formatter = DateFormatter()
         formatter.dateFormat = "EEEE, MMM d"
+        return formatter.string(from: Date())
+    }
+
+    private var lastRefreshedLabel: String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "h:mm a"
         return formatter.string(from: Date())
     }
 
@@ -186,6 +195,9 @@ struct ReportsView: View {
                 // Section 3: Today's Totals
                 summarySection
 
+                // Section 3b: Today's Workouts
+                todayWorkoutsSection
+
                 // Section 4: Week to Date
                 weekSummarySection
 
@@ -195,14 +207,24 @@ struct ReportsView: View {
             .padding(.horizontal, 16)
             .padding(.bottom, 24)
         }
+        .refreshable {
+            await loadData()
+        }
     }
 
     // MARK: - Date Header
 
     private var dateHeader: some View {
         VStack(spacing: 2) {
-            Text(todayLabel)
-                .font(.subheadline.bold())
+            HStack(spacing: 6) {
+                Text(todayLabel)
+                    .font(.subheadline.bold())
+                Text("·")
+                    .foregroundStyle(.secondary)
+                Text(lastRefreshed, style: .time)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
             Text("vs \(lastWeekDayLabel)")
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -496,6 +518,86 @@ struct ReportsView: View {
                 )
             }
         }
+    }
+
+    // MARK: - Today's Workouts Section
+
+    private var todayWorkoutsSection: some View {
+        let workouts = todayData?.workouts ?? []
+        return VStack(spacing: 12) {
+            sectionHeader(title: "Today's Workouts", icon: "figure.mixed.cardio")
+
+            if workouts.isEmpty {
+                Text("No workouts recorded today")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 20)
+                    .background(cardBackground)
+            } else {
+                VStack(spacing: 8) {
+                    ForEach(workouts) { entry in
+                        workoutRow(entry: entry)
+                    }
+                }
+            }
+        }
+    }
+
+    private func workoutRow(entry: WorkoutEntry) -> some View {
+        let typeInfo = workoutDisplayInfo(for: entry)
+        let lastWeekDuration = lastWeekDurationMinutes(matching: entry)
+
+        return HStack(spacing: 12) {
+            Image(systemName: typeInfo.symbol)
+                .font(.title3)
+                .foregroundStyle(typeInfo.color)
+                .frame(width: 32)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(typeInfo.name)
+                    .font(.subheadline.bold())
+                HStack(spacing: 8) {
+                    Label("\(Int(entry.durationMinutes)) min", systemImage: "clock")
+                    Label("\(Int(entry.calories)) kcal", systemImage: "flame.fill")
+                        .foregroundStyle(.orange)
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            }
+
+            Spacer()
+
+            VStack(alignment: .trailing, spacing: 2) {
+                Text("vs last week")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                changeIndicator(current: entry.durationMinutes, previous: lastWeekDuration)
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .background(cardBackground)
+    }
+
+    /// Returns (name, symbol, color) for a WorkoutEntry using WorkoutTypeInfo
+    private func workoutDisplayInfo(for entry: WorkoutEntry) -> (name: String, symbol: String, color: Color) {
+        if let info = WorkoutTypeInfo.allTypes.first(where: {
+            $0.activityType == entry.activityType && $0.isIndoor == entry.isIndoor
+        }) ?? WorkoutTypeInfo.allTypes.first(where: {
+            $0.activityType == entry.activityType
+        }) {
+            return (info.displayName, info.symbol, info.color)
+        }
+        return ("Workout", "figure.run", Color.accentColor)
+    }
+
+    /// Total duration (minutes) for same workout type from last week's data
+    private func lastWeekDurationMinutes(matching entry: WorkoutEntry) -> Double {
+        guard let lastWeek = lastWeekData?.workouts else { return 0 }
+        return lastWeek
+            .filter { $0.activityType == entry.activityType && $0.isIndoor == entry.isIndoor }
+            .reduce(0) { $0 + $1.durationMinutes }
     }
 
     // MARK: - Week to Date Section
@@ -947,6 +1049,7 @@ struct ReportsView: View {
         currentVO2Max = await vo2Current
         vo2History = await vo2Trend
         weekToDateData = await weekToDate
+        lastRefreshed = Date()
         isLoading = false
         print(reportSummary)
     }

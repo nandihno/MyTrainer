@@ -56,6 +56,15 @@ struct VO2MaxPoint: Identifiable, Sendable {
     let value: Double   // ml/kg/min
 }
 
+struct WorkoutEntry: Identifiable, Sendable {
+    let id = UUID()
+    let activityType: HKWorkoutActivityType
+    let isIndoor: Bool?
+    let durationMinutes: Double
+    let calories: Double
+    let startDate: Date
+}
+
 struct DayReportData: Sendable {
     let date: Date
     let hourlyExerciseMinutes: [HourlyEntry]
@@ -67,6 +76,7 @@ struct DayReportData: Sendable {
     let strengthTrainingMinutes: Double
     let heartRateTimeline: [HeartRatePoint]
     let heartRateStats: HeartRateStats
+    let workouts: [WorkoutEntry]
 }
 
 @Observable
@@ -300,6 +310,7 @@ final class HealthKitManager {
         async let strengthMin = fetchWorkoutMinutes(from: dayStart, to: dayEnd, activityTypes: [.traditionalStrengthTraining, .functionalStrengthTraining])
         async let hrTimeline = fetchHeartRateTimeline(from: dayStart, to: dayEnd)
         async let hrStats = fetchHeartRateStats(from: dayStart, to: dayEnd)
+        async let dayWorkouts = fetchWorkoutsForDay(from: dayStart, to: dayEnd)
 
         return await DayReportData(
             date: date,
@@ -311,7 +322,8 @@ final class HealthKitManager {
             coreTrainingMinutes: coreMin,
             strengthTrainingMinutes: strengthMin,
             heartRateTimeline: hrTimeline,
-            heartRateStats: hrStats
+            heartRateStats: hrStats,
+            workouts: dayWorkouts
         )
     }
 
@@ -531,6 +543,23 @@ final class HealthKitManager {
             }
             healthStore.execute(query)
         }
+    }
+
+    /// Fetches all workouts for a day as WorkoutEntry records, sorted by start time
+    func fetchWorkoutsForDay(from start: Date, to end: Date) async -> [WorkoutEntry] {
+        let workouts = await fetchAllWorkouts(from: start, to: end)
+        return workouts.map { workout in
+            let calories = workout.statistics(for: HKQuantityType(.activeEnergyBurned))?
+                .sumQuantity()?.doubleValue(for: .kilocalorie()) ?? 0
+            let isIndoor = workout.metadata?[HKMetadataKeyIndoorWorkout] as? Bool
+            return WorkoutEntry(
+                activityType: workout.workoutActivityType,
+                isIndoor: isIndoor,
+                durationMinutes: workout.duration / 60.0,
+                calories: calories,
+                startDate: workout.startDate
+            )
+        }.sorted { $0.startDate < $1.startDate }
     }
 
     /// Distributes workout duration across hourly buckets in minutes
