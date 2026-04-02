@@ -1,12 +1,39 @@
 import SwiftUI
 import SwiftData
+import UniformTypeIdentifiers
+
+private struct ShareSheetFile: Identifiable {
+    let id = UUID()
+    let url: URL
+}
+
+private struct PendingRegimeImport: Identifiable {
+    let id = UUID()
+    let fileName: String
+    let payload: RegimeExportPayload
+    let preview: RegimeImportPreview
+}
+
+private struct LibraryTransferAlert: Identifiable {
+    let id = UUID()
+    let title: String
+    let message: String
+}
 
 struct LibraryView: View {
     @Environment(\.modelContext) private var modelContext
     @Query(sort: \Exercise.name) private var exercises: [Exercise]
+    @Query(sort: \ScheduledExercise.dayOfWeek) private var scheduledExercises: [ScheduledExercise]
+    @Query(sort: \DailyExercise.date) private var dailyExercises: [DailyExercise]
 
     // Single active sheet to avoid double-presentation conflicts
     @State private var activeSheet: LibrarySheet?
+    @State private var exportFile: ShareSheetFile?
+    @State private var pendingImport: PendingRegimeImport?
+    @State private var transferAlert: LibraryTransferAlert?
+    @State private var isImportingRegime = false
+
+    private let regimeTransferService = RegimeTransferService()
 
     private enum LibrarySheet: Identifiable {
         case addExercise
@@ -30,6 +57,10 @@ struct LibraryView: View {
                 return (info, exercises.sorted { $0.name < $1.name })
             }
             .sorted { $0.0.displayName < $1.0.displayName }
+    }
+
+    private var canExportRegime: Bool {
+        !(exercises.isEmpty && scheduledExercises.isEmpty && dailyExercises.isEmpty)
     }
 
     var body: some View {
@@ -85,7 +116,24 @@ struct LibraryView: View {
             .background(Color(.appBackground))
             .navigationTitle("Library")
             .toolbar {
-                ToolbarItem(placement: .primaryAction) {
+                ToolbarItemGroup(placement: .topBarTrailing) {
+                    Menu {
+                        Button {
+                            exportRegime()
+                        } label: {
+                            Label("Export Regime", systemImage: "square.and.arrow.up")
+                        }
+                        .disabled(!canExportRegime)
+
+                        Button {
+                            isImportingRegime = true
+                        } label: {
+                            Label("Import Regime", systemImage: "square.and.arrow.down")
+                        }
+                    } label: {
+                        Image(systemName: "ellipsis.circle")
+                    }
+
                     Button {
                         activeSheet = .addExercise
                     } label: {
@@ -101,6 +149,63 @@ struct LibraryView: View {
                     ExerciseFormView(exerciseToEdit: exercise)
                 case .addToSchedule(let day, let isAlternative):
                     AddToScheduleSheet(dayOfWeek: day, exercises: exercises, isAlternative: isAlternative)
+                }
+            }
+            .sheet(item: $exportFile) { shareFile in
+                ActivityShareSheet(activityItems: [shareFile.url])
+            }
+            .sheet(item: $pendingImport) { pending in
+                importSummarySheet(for: pending)
+            }
+            .fileImporter(
+                isPresented: $isImportingRegime,
+                allowedContentTypes: [.json]
+            ) { result in
+                handleImportedFile(result)
+            }
+            .alert(item: $transferAlert) { alert in
+                Alert(
+                    title: Text(alert.title),
+                    message: Text(alert.message),
+                    dismissButton: .default(Text("OK"))
+                )
+            }
+        }
+    }
+
+    private func importSummarySheet(for pending: PendingRegimeImport) -> some View {
+        NavigationStack {
+            Form {
+                Section("File") {
+                    Text(pending.fileName)
+                        .textSelection(.enabled)
+                }
+
+                Section("Import Summary") {
+                    LabeledContent("Exercises", value: "\(pending.preview.exerciseCount)")
+                    LabeledContent("Weekly Schedule", value: "\(pending.preview.scheduledExerciseCount)")
+                    LabeledContent("Daily Workouts", value: "\(pending.preview.dailyExerciseCount)")
+                }
+
+                Section {
+                    Text("Importing will add a separate copy of this regime. Your current data will stay unchanged.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .navigationTitle("Import Regime")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") {
+                        pendingImport = nil
+                    }
+                }
+
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Import") {
+                        importRegime(pending)
+                    }
                 }
             }
         }
@@ -144,5 +249,71 @@ struct LibraryView: View {
         for index in offsets {
             modelContext.delete(exercises[index])
         }
+    }
+
+    private func exportRegime() {
+        do {
+            let fileURL = try regimeTransferService.makeExportFile(
+                exercises: exercises,
+                scheduledExercises: scheduledExercises,
+                dailyExercises: dailyExercises
+            )
+            exportFile = ShareSheetFile(url: fileURL)
+        } catch {
+            presentTransferError(title: "Export Failed", error: error)
+        }
+    }
+
+    private func handleImportedFile(_ result: Result<URL, Error>) {
+        switch result {
+        case .success(let url):
+            let hasScopedAccess = url.startAccessingSecurityScopedResource()
+            defer {
+                if hasScopedAccess {
+                    url.stopAccessingSecurityScopedResource()
+                }
+            }
+
+            do {
+                let data = try Data(contentsOf: url)
+                let preview = try regimeTransferService.previewImport(from: data)
+                pendingImport = PendingRegimeImport(
+                    fileName: url.lastPathComponent,
+                    payload: preview.payload,
+                    preview: preview
+                )
+            } catch {
+                presentTransferError(title: "Import Failed", error: error)
+            }
+
+        case .failure(let error):
+            guard !isUserCancelled(error) else { return }
+            presentTransferError(title: "Import Failed", error: error)
+        }
+    }
+
+    private func importRegime(_ pending: PendingRegimeImport) {
+        do {
+            let preview = try regimeTransferService.importPayload(pending.payload, into: modelContext)
+            pendingImport = nil
+            transferAlert = LibraryTransferAlert(
+                title: "Import Complete",
+                message: "Imported \(preview.exerciseCount) exercises, \(preview.scheduledExerciseCount) weekly schedule entries, and \(preview.dailyExerciseCount) daily workouts."
+            )
+        } catch {
+            presentTransferError(title: "Import Failed", error: error)
+        }
+    }
+
+    private func presentTransferError(title: String, error: Error) {
+        transferAlert = LibraryTransferAlert(
+            title: title,
+            message: error.localizedDescription
+        )
+    }
+
+    private func isUserCancelled(_ error: Error) -> Bool {
+        let nsError = error as NSError
+        return nsError.domain == NSCocoaErrorDomain && nsError.code == NSUserCancelledError
     }
 }
