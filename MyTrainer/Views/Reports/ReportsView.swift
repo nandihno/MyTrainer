@@ -99,6 +99,31 @@ private func vo2Rating(value: Double, age: Int, sex: String) -> VO2Rating {
     return .low
 }
 
+private struct WorkoutGroupKey: Hashable {
+    let activityType: HKWorkoutActivityType
+    let isIndoor: Bool?
+}
+
+private struct GroupedWorkoutEntry: Identifiable {
+    let activityType: HKWorkoutActivityType
+    let isIndoor: Bool?
+    let durationMinutes: Double
+    let calories: Double
+    let workoutCount: Int
+
+    private var indoorKey: String {
+        switch isIndoor {
+        case true: "indoor"
+        case false: "outdoor"
+        case nil: "unspecified"
+        }
+    }
+
+    var id: String {
+        "\(activityType.rawValue)-\(indoorKey)"
+    }
+}
+
 // MARK: - View
 
 struct ReportsView: View {
@@ -106,6 +131,7 @@ struct ReportsView: View {
     @State private var todayData: DayReportData?
     @State private var lastWeekData: DayReportData?
     @State private var isLoading = true
+    @State private var loadFailed = false
     @State private var authDenied = false
 
     // VO2 Max
@@ -149,6 +175,24 @@ struct ReportsView: View {
                 } else if isLoading {
                     ProgressView("Loading health data...")
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else if loadFailed {
+                    VStack(spacing: 16) {
+                        Image(systemName: "exclamationmark.triangle")
+                            .font(.largeTitle)
+                            .foregroundStyle(.secondary)
+                        Text("Could not load health data")
+                            .font(.headline)
+                        Text("HealthKit is taking too long to respond.")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.center)
+                        Button("Try Again") {
+                            Task { await loadData() }
+                        }
+                        .buttonStyle(.borderedProminent)
+                    }
+                    .padding()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
                     reportContent
                 }
@@ -174,7 +218,15 @@ struct ReportsView: View {
                     authDenied = true
                     return
                 }
+                // Safety bail-out: if HealthKit queries stall, unblock the UI after 30s
+                let bail = Task { @MainActor in
+                    try? await Task.sleep(nanoseconds: 30_000_000_000)
+                    guard isLoading else { return }
+                    isLoading = false
+                    loadFailed = true
+                }
                 await loadData()
+                bail.cancel()
             }
         }
     }
@@ -523,7 +575,7 @@ struct ReportsView: View {
     // MARK: - Today's Workouts Section
 
     private var todayWorkoutsSection: some View {
-        let workouts = todayData?.workouts ?? []
+        let workouts = groupedWorkoutEntries(from: todayData?.workouts ?? [])
         return VStack(spacing: 12) {
             sectionHeader(title: "Today's Workouts", icon: "figure.mixed.cardio")
 
@@ -544,7 +596,7 @@ struct ReportsView: View {
         }
     }
 
-    private func workoutRow(entry: WorkoutEntry) -> some View {
+    private func workoutRow(entry: GroupedWorkoutEntry) -> some View {
         let typeInfo = workoutDisplayInfo(for: entry)
         let lastWeekDuration = lastWeekDurationMinutes(matching: entry)
 
@@ -555,8 +607,13 @@ struct ReportsView: View {
                 .frame(width: 32)
 
             VStack(alignment: .leading, spacing: 2) {
-                Text(typeInfo.name)
-                    .font(.subheadline.bold())
+                HStack(spacing: 8) {
+                    Text(typeInfo.name)
+                        .font(.subheadline.bold())
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.85)
+                    workoutCountBadge(count: entry.workoutCount, color: typeInfo.color)
+                }
                 HStack(spacing: 8) {
                     Label("\(Int(entry.durationMinutes)) min", systemImage: "clock")
                     Label("\(Int(entry.calories)) kcal", systemImage: "flame.fill")
@@ -580,8 +637,22 @@ struct ReportsView: View {
         .background(cardBackground)
     }
 
-    /// Returns (name, symbol, color) for a WorkoutEntry using WorkoutTypeInfo
-    private func workoutDisplayInfo(for entry: WorkoutEntry) -> (name: String, symbol: String, color: Color) {
+    @ViewBuilder
+    private func workoutCountBadge(count: Int, color: Color) -> some View {
+        Text("\(count) \(count == 1 ? "session" : "sessions")")
+            .font(.caption2.weight(.semibold))
+            .foregroundStyle(color)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 3)
+            .fixedSize(horizontal: true, vertical: false)
+            .background(
+                Capsule()
+                    .fill(color.opacity(0.16))
+            )
+    }
+
+    /// Returns (name, symbol, color) for a grouped workout entry using WorkoutTypeInfo
+    private func workoutDisplayInfo(for entry: GroupedWorkoutEntry) -> (name: String, symbol: String, color: Color) {
         if let info = WorkoutTypeInfo.allTypes.first(where: {
             $0.activityType == entry.activityType && $0.isIndoor == entry.isIndoor
         }) ?? WorkoutTypeInfo.allTypes.first(where: {
@@ -592,8 +663,38 @@ struct ReportsView: View {
         return ("Workout", "figure.run", Color.accentColor)
     }
 
+    private func groupedWorkoutEntries(from workouts: [WorkoutEntry]) -> [GroupedWorkoutEntry] {
+        var groupedEntries: [WorkoutGroupKey: GroupedWorkoutEntry] = [:]
+        var orderedKeys: [WorkoutGroupKey] = []
+
+        for workout in workouts {
+            let key = WorkoutGroupKey(activityType: workout.activityType, isIndoor: workout.isIndoor)
+
+            if let existing = groupedEntries[key] {
+                groupedEntries[key] = GroupedWorkoutEntry(
+                    activityType: existing.activityType,
+                    isIndoor: existing.isIndoor,
+                    durationMinutes: existing.durationMinutes + workout.durationMinutes,
+                    calories: existing.calories + workout.calories,
+                    workoutCount: existing.workoutCount + 1
+                )
+            } else {
+                groupedEntries[key] = GroupedWorkoutEntry(
+                    activityType: workout.activityType,
+                    isIndoor: workout.isIndoor,
+                    durationMinutes: workout.durationMinutes,
+                    calories: workout.calories,
+                    workoutCount: 1
+                )
+                orderedKeys.append(key)
+            }
+        }
+
+        return orderedKeys.compactMap { groupedEntries[$0] }
+    }
+
     /// Total duration (minutes) for same workout type from last week's data
-    private func lastWeekDurationMinutes(matching entry: WorkoutEntry) -> Double {
+    private func lastWeekDurationMinutes(matching entry: GroupedWorkoutEntry) -> Double {
         guard let lastWeek = lastWeekData?.workouts else { return 0 }
         return lastWeek
             .filter { $0.activityType == entry.activityType && $0.isIndoor == entry.isIndoor }
@@ -1039,6 +1140,7 @@ struct ReportsView: View {
 
     private func loadData() async {
         isLoading = true
+        loadFailed = false
         async let today = healthKitManager.fetchDayReport(for: Date())
         async let lastWeek = healthKitManager.fetchDayReport(for: healthKitManager.sameDayLastWeek())
         async let vo2Current = healthKitManager.fetchCurrentVO2Max()

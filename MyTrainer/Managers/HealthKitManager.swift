@@ -301,16 +301,22 @@ final class HealthKitManager {
         let isToday = cal.isDateInToday(date)
         let dayEnd = isToday ? now : cal.date(byAdding: .day, value: 1, to: dayStart)!
 
-        async let hourlyEx = fetchHourlyWorkoutDuration(from: dayStart, to: dayEnd)
+        // Fetch workouts once and share across the three functions that need them,
+        // avoiding multiple concurrent HKSampleQuery calls for the same date range
+        // which can cause HealthKit to stall when no workout data exists.
+        let workouts = await fetchAllWorkouts(from: dayStart, to: dayEnd)
+
         async let hourlyCal = fetchHourlyCalories(from: dayStart, to: dayEnd)
         async let hourlySteps = fetchHourlySteps(from: dayStart, to: dayEnd)
-        async let workoutHR = fetchWorkoutHeartRateAvg(from: dayStart, to: dayEnd)
+        async let workoutHR = fetchAverageHeartRate(for: workouts)
         async let distance = fetchTotalDistance(from: dayStart, to: dayEnd)
         async let coreMin = fetchWorkoutMinutes(from: dayStart, to: dayEnd, activityTypes: [.coreTraining])
         async let strengthMin = fetchWorkoutMinutes(from: dayStart, to: dayEnd, activityTypes: [.traditionalStrengthTraining, .functionalStrengthTraining])
         async let hrTimeline = fetchHeartRateTimeline(from: dayStart, to: dayEnd)
         async let hrStats = fetchHeartRateStats(from: dayStart, to: dayEnd)
-        async let dayWorkouts = fetchWorkoutsForDay(from: dayStart, to: dayEnd)
+
+        let hourlyEx = buildHourlyWorkoutDuration(workouts: workouts, from: dayStart, to: dayEnd)
+        let dayWorkouts = buildWorkoutEntries(from: workouts)
 
         return await DayReportData(
             date: date,
@@ -327,10 +333,9 @@ final class HealthKitManager {
         )
     }
 
-    /// Fetches workout duration bucketed by hour
-    private func fetchHourlyWorkoutDuration(from start: Date, to end: Date) async -> [HourlyEntry] {
+    /// Builds hourly workout duration buckets synchronously from pre-fetched workouts.
+    private func buildHourlyWorkoutDuration(workouts: [HKWorkout], from start: Date, to end: Date) -> [HourlyEntry] {
         let cal = Calendar.current
-        let workouts = await fetchAllWorkouts(from: start, to: end)
         let currentHour = cal.component(.hour, from: end)
         let isToday = cal.isDateInToday(start)
         let maxHour = isToday ? currentHour : 23
@@ -418,12 +423,6 @@ final class HealthKitManager {
         return (0...maxHour).map { hour in
             HourlyEntry(hour: hour, value: hourlyData[hour] ?? 0)
         }
-    }
-
-    /// Average heart rate during workouts only for a given day
-    private func fetchWorkoutHeartRateAvg(from start: Date, to end: Date) async -> Double? {
-        let workouts = await fetchAllWorkouts(from: start, to: end)
-        return await fetchAverageHeartRate(for: workouts)
     }
 
     /// Total walking + running distance (indoor + outdoor) in km.
@@ -545,10 +544,9 @@ final class HealthKitManager {
         }
     }
 
-    /// Fetches all workouts for a day as WorkoutEntry records, sorted by start time
-    func fetchWorkoutsForDay(from start: Date, to end: Date) async -> [WorkoutEntry] {
-        let workouts = await fetchAllWorkouts(from: start, to: end)
-        return workouts.map { workout in
+    /// Maps pre-fetched HKWorkout objects to WorkoutEntry records, sorted by start time.
+    private func buildWorkoutEntries(from workouts: [HKWorkout]) -> [WorkoutEntry] {
+        workouts.map { workout in
             let calories = workout.statistics(for: HKQuantityType(.activeEnergyBurned))?
                 .sumQuantity()?.doubleValue(for: .kilocalorie()) ?? 0
             let isIndoor = workout.metadata?[HKMetadataKeyIndoorWorkout] as? Bool
